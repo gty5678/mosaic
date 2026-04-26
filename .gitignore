@@ -1,0 +1,71 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Packaging / install artifacts
+build/
+dist/
+*.egg
+*.egg-info/
+*.egg-info
+pip-wheel-metadata/
+.eggs/
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment & secrets (local overrides)
+.env
+.env.*
+!.env.example
+
+# IDE / editors（若需共享 VS Code / Cursor 工作区配置，可改为只忽略本地文件）
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs & temp
+*.log
+*.tmp
+*.temp
+
+# uv（使用 uv 且希望锁文件入库时，删除下一行）
+# uv.lock

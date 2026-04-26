@@ -1,0 +1,38 @@
+{
+  "manifest_version": 2,
+  "name": "DarkEye Capture",
+  "version": "1.2.5",
+  "description": "采集网页的信息到本地，手动采集，无批量操作，需要打开本地软件DarkEye与浏览器插件后才可使用。",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "webNavigation",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "*://*.dmm.co.jp/*",
+    "*://*/*"
+  ],
+  "background": {"scripts": ["merge_work.js", "background.js"]},
+  "browser_action": {
+    "default_icon": "icons/logo.png",
+    "default_title": "Capture Page",
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    { "matches": ["*://javdb.com/*", "*://www.javdb.com/*"], "js": ["content/sites/javdb.js"] },
+    { "matches": ["*://www.javlibrary.com/*"], "js": ["content/sites/javlibrary.js"] },
+    { "matches": ["*://javtxt.com/*", "*://www.javtxt.com/*"], "js": ["content/sites/javtxt.js"] },
+    { "matches": ["*://avdanyuwiki.com/*", "*://www.avdanyuwiki.com/*"], "js": ["content/sites/avdanyuwiki.js"] },
+    { "matches": ["*://*.dmm.co.jp/*"], "js": ["content/sites/fanza.js"] },
+    { "matches": ["*://www.minnano-av.com/*"], "js": ["content/sites/minnano-scrape.js", "content/sites/minnano.js", "content/sites/minnano-auto.js"], "run_at": "document_end" },
+    { "matches": ["*://javdb.com/*", "*://www.javdb.com/*", "*://www.javlibrary.com/*", "*://javtxt.com/*", "*://www.javtxt.com/*"], "js": ["content/sites/sniffer.js"], "css": ["content/style.css"] }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "909510519@qq.com",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  }
+}
