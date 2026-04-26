@@ -73,6 +73,27 @@ python main.py
 
 ---
 
+## 本地调试
+
+1. **Cursor / VS Code**  
+   - 安装官方 **Python** 扩展（内置/附带 **Debugpy**）。  
+   - 用项目自带的 **`Run and Debug`** 配置（`.vscode/launch.json`）：  
+     - **Worker: main.py** — 适合在 `app.py` 里下断点、单步执行（单进程，无热重载）。  
+     - **Worker: uvicorn app:app** — 改代码自动重启；`--reload` 会起子进程，断点行为因环境而异，复杂问题优先用 `main.py` 配置。  
+   - 在 **运行和调试** 里选好 Python 解释器（建议指向 `.venv`）。
+
+2. **命令行快速验证**  
+   - 起服务后浏览器打开：**http://127.0.0.1:56790/docs**（Swagger）或 **GET** `http://127.0.0.1:56790/api/v1/health`。  
+   - 依赖扩展与 SSE 的接口需先加载扩展并连上 **`/events`**，否则会返回 503 等。
+
+3. **日志**  
+   - Logger 名为 **`server2.worker`**。需要更细输出可在代码里把该 logger 设为 `DEBUG`，或暂时在 `main.py` 里 `logging.basicConfig(level=logging.DEBUG)`（按需添加，勿提交敏感环境日志）。
+
+4. **与主程序联调**  
+   - 若调试转发类接口，请先启动桌面主程序（默认 **56789**），或设置 `DARKEYE_MAIN_BASE_URL` 指向实际地址。
+
+---
+
 ## HTTP API 摘要
 
 | 方法 | 路径 | 作用 |

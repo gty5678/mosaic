@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import uuid
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -35,7 +36,20 @@ HOP_BY_HOP_HEADERS = {
 }
 FORWARD_TIMEOUT = httpx.Timeout(connect=5.0, read=140.0, write=20.0, pool=20.0)
 
-app = FastAPI(title="DarkEye Extension Worker")
+
+@asynccontextmanager
+async def _lifespan(_: FastAPI):
+    logger.info(
+        "worker startup main_base_url=%s work_merge_timeout=%.0fs image_fetch_timeout=%.0fs",
+        MAIN_BASE_URL,
+        WORK_MERGE_TIMEOUT_SEC,
+        IMAGE_FETCH_TIMEOUT_SEC,
+    )
+    yield
+    logger.info("worker shutdown")
+
+
+app = FastAPI(title="DarkEye Extension Worker", lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -127,6 +141,13 @@ async def _forward(request: Request, target_path: str) -> Response:
     method = request.method.upper()
     headers = _filtered_request_headers(request)
     body = await request.body()
+    logger.info(
+        "proxy -> main method=%s path=%s target=%s body_len=%s",
+        method,
+        target_path,
+        target,
+        len(body) if body else 0,
+    )
     try:
         async with httpx.AsyncClient(timeout=FORWARD_TIMEOUT) as client:
             upstream = await client.request(
@@ -137,6 +158,13 @@ async def _forward(request: Request, target_path: str) -> Response:
             "Proxy request failed: method=%s target=%s err=%s", method, target, e
         )
         raise HTTPException(status_code=502, detail="worker proxy upstream unavailable")
+    logger.info(
+        "proxy <- main method=%s path=%s status=%s bytes=%s",
+        method,
+        target_path,
+        upstream.status_code,
+        len(upstream.content) if upstream.content else 0,
+    )
     return Response(
         content=upstream.content,
         status_code=upstream.status_code,
@@ -146,6 +174,13 @@ async def _forward(request: Request, target_path: str) -> Response:
 
 
 async def _broadcast_sse(message: Dict[str, Any]) -> None:
+    mtype = message.get("type", "?")
+    logger.info(
+        "sse broadcast type=%s clients=%s payload_keys=%s",
+        mtype,
+        len(sse_clients),
+        list(message.keys()),
+    )
     event_data = f"data: {json.dumps(message)}\n\n"
     dead_clients: List[asyncio.Queue] = []
     for client in sse_clients:
@@ -160,6 +195,7 @@ async def _broadcast_sse(message: Dict[str, Any]) -> None:
 
 @app.get("/api/v1/health")
 async def health() -> dict[str, str]:
+    logger.debug("health check sse_clients=%s", len(sse_clients))
     return {"status": "ok", "service": "DarkEye Extension Worker"}
 
 
@@ -181,6 +217,7 @@ async def send_navigate(command: NavigateCommand) -> dict[str, Any]:
     if command.context is not None:
         message["context"] = command.context
     await _broadcast_sse(message)
+    logger.info("navigate done clients=%s", len(sse_clients))
     return {"status": "success", "count": len(sse_clients)}
 
 
@@ -197,12 +234,39 @@ async def get_work_merge(serial_number: str):
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     async with _work_merge_lock:
         _work_merge_futures[request_id] = fut
+    logger.info(
+        "work_merge wait request_id=%s serial_number=%s sse_clients=%s",
+        request_id,
+        sn,
+        len(sse_clients),
+    )
     try:
         await _broadcast_sse(
             {"type": "work_merge_fetch", "request_id": request_id, "serial_number": sn}
         )
-        return await asyncio.wait_for(fut, timeout=WORK_MERGE_TIMEOUT_SEC)
+        out = await asyncio.wait_for(fut, timeout=WORK_MERGE_TIMEOUT_SEC)
+        if isinstance(out, dict):
+            logger.info(
+                "work_merge ok request_id=%s serial_number=%s result=%s",
+                request_id,
+                sn,
+                json.dumps(out, ensure_ascii=False, default=str),
+            )
+        else:
+            logger.info(
+                "work_merge ok request_id=%s serial_number=%s unexpected_type=%r",
+                request_id,
+                sn,
+                out,
+            )
+        return out
     except asyncio.TimeoutError:
+        logger.warning(
+            "work_merge timeout request_id=%s serial_number=%s after=%.0fs",
+            request_id,
+            sn,
+            WORK_MERGE_TIMEOUT_SEC,
+        )
         raise HTTPException(
             status_code=504,
             detail="work merge timed out waiting for browser extension",
@@ -220,6 +284,7 @@ async def receive_work_merge_result(body: WorkMergeResultBody):
     async with _work_merge_lock:
         fut = _work_merge_futures.get(rid)
     if fut is None or fut.done():
+        logger.info("work_merge_result ignored request_id=%s", rid)
         return {"status": "ignored"}
     out: Dict[str, Any] = {
         "ok": body.ok,
@@ -230,6 +295,13 @@ async def receive_work_merge_result(body: WorkMergeResultBody):
     if body.error:
         out["error"] = body.error
     fut.set_result(out)
+    logger.info(
+        "work_merge_result request_id=%s ok=%s serial_number=%s error=%s",
+        rid,
+        body.ok,
+        (body.serial_number or "").strip(),
+        body.error,
+    )
     return {"status": "success"}
 
 
@@ -261,10 +333,29 @@ async def get_actress_minnano(
     mid = (minnano_url or "").strip()
     if mid:
         message["minnano_url"] = mid
+    logger.info(
+        "actress_fetch wait request_id=%s name=%s minnano_url=%s",
+        request_id,
+        jp,
+        mid or "",
+    )
     try:
         await _broadcast_sse(message)
-        return await asyncio.wait_for(fut, timeout=WORK_MERGE_TIMEOUT_SEC)
+        out = await asyncio.wait_for(fut, timeout=WORK_MERGE_TIMEOUT_SEC)
+        logger.info(
+            "actress_fetch ok request_id=%s name=%s result_ok=%s",
+            request_id,
+            jp,
+            out.get("ok") if isinstance(out, dict) else None,
+        )
+        return out
     except asyncio.TimeoutError:
+        logger.warning(
+            "actress_fetch timeout request_id=%s name=%s after=%.0fs",
+            request_id,
+            jp,
+            WORK_MERGE_TIMEOUT_SEC,
+        )
         raise HTTPException(
             status_code=504,
             detail="actress fetch timed out waiting for browser extension",
@@ -284,6 +375,7 @@ async def receive_actress_fetch_result(body: ActressFetchResultBody):
         fut = _actress_fetch_futures.get(rid)
         fallback = _actress_fetch_names.get(rid, "")
     if fut is None or fut.done():
+        logger.info("actress_fetch_result ignored request_id=%s", rid)
         return {"status": "ignored"}
     out: Dict[str, Any] = {
         "ok": body.ok,
@@ -293,6 +385,13 @@ async def receive_actress_fetch_result(body: ActressFetchResultBody):
     if body.error:
         out["error"] = body.error
     fut.set_result(out)
+    logger.info(
+        "actress_fetch_result request_id=%s ok=%s name=%s error=%s",
+        rid,
+        body.ok,
+        out["actress_jp_name"],
+        body.error,
+    )
     return {"status": "success"}
 
 
@@ -306,12 +405,26 @@ async def get_top_actresses():
     fut: asyncio.Future = asyncio.get_running_loop().create_future()
     async with _top_actresses_lock:
         _top_actresses_futures[request_id] = fut
+    logger.info("top_actresses wait request_id=%s", request_id)
     try:
         await _broadcast_sse(
             {"type": "javtxt_top_actresses_fetch", "request_id": request_id}
         )
-        return await asyncio.wait_for(fut, timeout=WORK_MERGE_TIMEOUT_SEC)
+        out = await asyncio.wait_for(fut, timeout=WORK_MERGE_TIMEOUT_SEC)
+        n = len(out.get("names") or []) if isinstance(out, dict) else 0
+        logger.info(
+            "top_actresses ok request_id=%s result_ok=%s name_count=%s",
+            request_id,
+            out.get("ok") if isinstance(out, dict) else None,
+            n,
+        )
+        return out
     except asyncio.TimeoutError:
+        logger.warning(
+            "top_actresses timeout request_id=%s after=%.0fs",
+            request_id,
+            WORK_MERGE_TIMEOUT_SEC,
+        )
         raise HTTPException(
             status_code=504,
             detail="top actresses fetch timed out waiting for browser extension",
@@ -329,12 +442,20 @@ async def receive_top_actresses_result(body: TopActressesResultBody):
     async with _top_actresses_lock:
         fut = _top_actresses_futures.get(rid)
     if fut is None or fut.done():
+        logger.info("top_actresses_result ignored request_id=%s", rid)
         return {"status": "ignored"}
     names = [str(x) for x in (body.names or []) if x is not None]
     out: Dict[str, Any] = {"ok": body.ok, "names": names}
     if body.error:
         out["error"] = body.error
     fut.set_result(out)
+    logger.info(
+        "top_actresses_result request_id=%s ok=%s name_count=%s error=%s",
+        rid,
+        body.ok,
+        len(names),
+        body.error,
+    )
     return {"status": "success"}
 
 
@@ -349,12 +470,26 @@ async def image_by_url(body: ImageByUrlBody):
     fut = asyncio.get_running_loop().create_future()
     async with _image_fetch_lock:
         _image_fetch_futures[rid] = fut
+    logger.info("cover_image fetch wait request_id=%s url=%s", rid, image_url)
     try:
         await _broadcast_sse(
             {"type": "fetch_cover_image", "url": image_url, "request_id": rid}
         )
-        return await asyncio.wait_for(fut, timeout=IMAGE_FETCH_TIMEOUT_SEC)
+        out = await asyncio.wait_for(fut, timeout=IMAGE_FETCH_TIMEOUT_SEC)
+        ok = bool(out.get("success")) if isinstance(out, dict) else False
+        logger.info(
+            "cover_image fetch done request_id=%s success=%s msg=%s",
+            rid,
+            ok,
+            (out.get("message") if isinstance(out, dict) else None) or "",
+        )
+        return out
     except asyncio.TimeoutError:
+        logger.warning(
+            "cover_image fetch timeout request_id=%s after=%.0fs",
+            rid,
+            IMAGE_FETCH_TIMEOUT_SEC,
+        )
         return {"success": False, "image": None, "message": "未在时限内返回图片"}
     finally:
         async with _image_fetch_lock:
@@ -373,6 +508,12 @@ async def receive_cover_image_fetch_result(body: CoverImageFetchResult):
             fut.set_result(
                 {"success": False, "image": None, "message": body.error or "失败"}
             )
+        logger.info(
+            "cover_image_result request_id=%s ok=False err=%s fut_matched=%s",
+            rid,
+            body.error,
+            fut is not None,
+        )
     else:
         b64 = (body.content_base64 or "").strip()
         if not b64:
@@ -380,6 +521,11 @@ async def receive_cover_image_fetch_result(body: CoverImageFetchResult):
                 fut.set_result(
                     {"success": False, "image": None, "message": "无图片数据"}
                 )
+            logger.info(
+                "cover_image_result request_id=%s ok=True empty_b64 fut_matched=%s",
+                rid,
+                fut is not None,
+            )
         else:
             try:
                 raw = base64.b64decode(b64, validate=True)
@@ -389,11 +535,23 @@ async def receive_cover_image_fetch_result(body: CoverImageFetchResult):
                     raise ValueError("图片过大")
                 if fut is not None and not fut.done():
                     fut.set_result({"success": True, "image": b64})
+                logger.info(
+                    "cover_image_result request_id=%s ok=True bytes=%s fut_matched=%s",
+                    rid,
+                    len(raw),
+                    fut is not None,
+                )
             except Exception as e:
                 if fut is not None and not fut.done():
                     fut.set_result(
                         {"success": False, "image": None, "message": f"解码失败: {e}"}
                     )
+                logger.warning(
+                    "cover_image_result request_id=%s decode_fail err=%s fut_matched=%s",
+                    rid,
+                    e,
+                    fut is not None,
+                )
     return {"status": "success"}
 
 
@@ -432,6 +590,11 @@ async def sse_endpoint(request: Request):
     async def event_generator():
         client_queue = asyncio.Queue()
         sse_clients.append(client_queue)
+        logger.info(
+            "sse client connected total=%s client=%s",
+            len(sse_clients),
+            request.client.host if request.client else "?",
+        )
         try:
             while True:
                 if await request.is_disconnected():
@@ -443,6 +606,7 @@ async def sse_endpoint(request: Request):
         finally:
             if client_queue in sse_clients:
                 sse_clients.remove(client_queue)
+            logger.info("sse client disconnected total=%s", len(sse_clients))
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -453,4 +617,5 @@ async def sse_endpoint(request: Request):
 )
 async def proxy_browser_plugin_api(request: Request, path: str) -> Response:
     # 其余插件/联调请求走主程序；核心四个 API 由本服务显式覆盖执行。
+    logger.info("proxy catch-all api/v1/%s method=%s", path, request.method)
     return await _forward(request, f"api/v1/{path}")

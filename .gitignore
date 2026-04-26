@@ -50,9 +50,10 @@ dmypy.json
 .env.*
 !.env.example
 
-# IDE / editors（若需共享 VS Code / Cursor 工作区配置，可改为只忽略本地文件）
+# IDE / editors
 .idea/
-.vscode/
+.vscode/*
+!.vscode/launch.json
 *.swp
 *.swo
 *~
