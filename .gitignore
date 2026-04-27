@@ -70,3 +70,5 @@ Desktop.ini
 
 # uv（使用 uv 且希望锁文件入库时，删除下一行）
 # uv.lock
+
+output/

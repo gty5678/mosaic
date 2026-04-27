@@ -199,6 +199,12 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "DarkEye Extension Worker"}
 
 
+@app.get("/api/v1/exist")
+async def exist() -> dict[str, bool]:
+    """供外部软件探测本服务是否在线（轻量、无副逻辑）。"""
+    return {"ok": True}
+
+
 class NavigateCommand(BaseModel):
     url: str
     target: str = "new_tab"  # new_tab 或 current_tab

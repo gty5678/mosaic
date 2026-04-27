@@ -16,6 +16,9 @@ dependencies = [
     "httpx>=0.26.0",
 ]
 
+[project.optional-dependencies]
+pyinstaller = ["pyinstaller>=6.0"]
+
 [project.scripts]
 darkeye-extension-worker = "main:main"
 
