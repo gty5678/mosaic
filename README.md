@@ -1,5 +1,12 @@
 # jav-crawler-server
 
+<p align="center">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.109%2B-009688?logo=fastapi&amp;logoColor=white">
+  <img alt="Uvicorn" src="https://img.shields.io/badge/Uvicorn-ASGI-4051B5?logo=uvicorn&amp;logoColor=white">
+  <img alt="License: Proprietary" src="https://img.shields.io/badge/License-Proprietary-lightgrey">
+</p>
+
 面向 **DarkEye** 桌面套件的本机 **扩展 Worker 网关**：用 **FastAPI** 跑在 `127.0.0.1:56790`，与浏览器扩展通过 **SSE（`/events`）** 建立长连接，把「必须在真实浏览器里完成」的请求（合并抓取、女优页、封面图等）交给扩展执行；其余与数据库、UI 相关的接口则 **反向代理** 到桌面主程序（默认 `127.0.0.1:56789`）。
 
 仓库内同时包含 **Chrome / Firefox** 两套扩展源码（`extensions/`），用于在本地页面中采集并回传数据。**不向远端服务器上传业务数据**（扩展说明见各扩展目录下的 `README.txt`）。
