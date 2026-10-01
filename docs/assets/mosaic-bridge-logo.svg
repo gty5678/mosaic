@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Mosaic Bridge logo</title>
+  <desc id="desc">Nine colorful rounded tiles arranged in a three by three grid.</desc>
+  <g>
+    <rect x="48" y="48" width="128" height="128" rx="24" fill="#173f9c"/>
+    <rect x="192" y="48" width="128" height="128" rx="24" fill="#18bff2"/>
+    <rect x="336" y="48" width="128" height="128" rx="24" fill="#14a99d"/>
+    <rect x="48" y="192" width="128" height="128" rx="24" fill="#2ecb4e"/>
+    <rect x="192" y="192" width="128" height="128" rx="24" fill="#ffd12f"/>
+    <rect x="336" y="192" width="128" height="128" rx="24" fill="#ff8718"/>
+    <rect x="48" y="336" width="128" height="128" rx="24" fill="#ff5c55"/>
+    <rect x="192" y="336" width="128" height="128" rx="24" fill="#e91591"/>
+    <rect x="336" y="336" width="128" height="128" rx="24" fill="#7829dc"/>
+  </g>
+</svg>

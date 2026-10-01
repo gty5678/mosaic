@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/mosaic-bridge-logo.png" width="152" alt="Mosaic Bridge logo">
+  <img src="docs/assets/mosaic-bridge-logo.svg" width="152" alt="Mosaic Bridge logo">
 
   # Mosaic Bridge
 

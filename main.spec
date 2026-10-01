@@ -171,6 +171,7 @@ exe = EXE(
     a.datas,
     [],
     name="mosaic-bridge",
+    icon=os.path.join(SPEC_DIR, "docs", "assets", "mosaic-bridge.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
