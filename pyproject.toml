@@ -3,9 +3,9 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jav-crawler-server"
+name = "mosaic-bridge"
 version = "0.1.0"
-description = "DarkEye 浏览器扩展本地 Worker：FastAPI 网关，与桌面主程序协同完成页面采集与转发。"
+description = "Mosaic Bridge：连接 DarkEye 桌面应用与浏览器扩展的本地 FastAPI 网关。"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Proprietary" }
@@ -16,11 +16,13 @@ dependencies = [
     "httpx>=0.26.0",
 ]
 
-[project.optional-dependencies]
-pyinstaller = ["pyinstaller>=6.0"]
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.0",
+]
 
 [project.scripts]
-darkeye-extension-worker = "main:main"
+mosaic-bridge = "main:main"
 
 [tool.setuptools]
 py-modules = ["app", "main", "config"]

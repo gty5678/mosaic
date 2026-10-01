@@ -67,7 +67,7 @@ if __name__ == "__main__":
 
             _log = os.path.join(
                 os.environ.get("TEMP", os.path.expanduser("~")),
-                "darkeye-extension-worker-fatal.log",
+                "mosaic-bridge-fatal.log",
             )
             with open(_log, "w", encoding="utf-8", errors="replace") as f:
                 f.write("Fatal error. See Python traceback below.\n\n")

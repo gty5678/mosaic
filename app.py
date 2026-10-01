@@ -12,7 +12,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("server2.worker")
 
@@ -49,7 +49,23 @@ async def _lifespan(_: FastAPI):
     logger.info("worker shutdown")
 
 
-app = FastAPI(title="DarkEye Extension Worker", lifespan=_lifespan)
+app = FastAPI(
+    title="Mosaic Bridge",
+    version="0.1.0",
+    description=(
+        "DarkEye 浏览器扩展本地 Worker。REST 调用通过 SSE 指挥已连接的浏览器扩展；"
+        "部分 `/api/v1/*` 路径原样代理至桌面主程序。\n\n"
+        "调用采集接口前，扩展必须已连接 `GET /events`。请求与扩展回调通过 `request_id` 配对。"
+    ),
+    openapi_tags=[
+        {"name": "服务", "description": "Worker 存活探测。"},
+        {"name": "扩展命令", "description": "向浏览器扩展下发命令或等待采集结果。"},
+        {"name": "扩展回调", "description": "仅供浏览器扩展回传 SSE 命令的处理结果。"},
+        {"name": "事件流", "description": "浏览器扩展建立的 SSE 长连接。"},
+        {"name": "主程序代理", "description": "请求和响应体均由桌面主程序定义，Worker 不解析或改写业务 JSON。"},
+    ],
+    lifespan=_lifespan,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -71,38 +87,93 @@ _image_fetch_futures: Dict[str, asyncio.Future] = {}
 
 
 class WorkMergeResultBody(BaseModel):
-    request_id: str
-    ok: bool
-    merged: Optional[Dict[str, Any]] = None
-    per_site: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    serial_number: Optional[str] = None
+    request_id: str = Field(description="Worker 下发 `work_merge_fetch` 时生成的 UUID。")
+    ok: bool = Field(description="扩展采集是否成功。")
+    merged: Optional[Dict[str, Any]] = Field(default=None, description="合并后的影片数据；字段由扩展的站点解析器决定。")
+    per_site: Optional[Dict[str, Any]] = Field(default=None, description="按站点分组的原始/中间采集结果。")
+    error: Optional[str] = Field(default=None, description="失败原因；`ok=false` 时建议提供。")
+    serial_number: Optional[str] = Field(default=None, description="采集的番号；未传时响应中为空字符串。")
 
 
 class ActressFetchResultBody(BaseModel):
-    request_id: str
-    ok: bool
-    data: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
-    actress_jp_name: Optional[str] = None
+    request_id: str = Field(description="Worker 下发 `minnano_actress_fetch` 时生成的 UUID。")
+    ok: bool = Field(description="扩展采集是否成功。")
+    data: Optional[Dict[str, Any]] = Field(default=None, description="女优资料；字段由 Minnano 页面解析器决定。")
+    error: Optional[str] = Field(default=None, description="失败原因；`ok=false` 时建议提供。")
+    actress_jp_name: Optional[str] = Field(default=None, description="女优日文名；省略时 Worker 使用原请求中的路径参数。")
 
 
 class TopActressesResultBody(BaseModel):
-    request_id: str
-    ok: bool
-    names: Optional[List[str]] = None
-    error: Optional[str] = None
+    request_id: str = Field(description="Worker 下发 `javtxt_top_actresses_fetch` 时生成的 UUID。")
+    ok: bool = Field(description="扩展采集是否成功。")
+    names: Optional[List[str]] = Field(default=None, description="热门女优名称列表。")
+    error: Optional[str] = Field(default=None, description="失败原因；`ok=false` 时建议提供。")
 
 
 class ImageByUrlBody(BaseModel):
-    url: str
+    url: str = Field(description="待由浏览器下载的完整 HTTP 或 HTTPS 图片 URL。")
 
 
 class CoverImageFetchResult(BaseModel):
-    request_id: str
+    request_id: str = Field(description="Worker 下发 `fetch_cover_image` 时生成的 UUID。")
+    ok: bool = Field(description="下载是否成功。")
+    error: Optional[str] = Field(default=None, description="下载或编码失败原因。")
+    content_base64: Optional[str] = Field(default=None, description="图片原始字节的标准 Base64；仅 `ok=true` 时传入。")
+
+
+class NavigateCommand(BaseModel):
+    url: str = Field(description="扩展应打开的完整 URL。")
+    target: str = Field(default="new_tab", description="`new_tab` 新建标签页；`current_tab` 在当前标签页打开。")
+    context: Optional[Dict[str, Any]] = Field(default=None, description="原样传给扩展的可选业务上下文。")
+
+
+class StatusResponse(BaseModel):
+    status: str = Field(description="处理状态，如 `success` 或 `ignored`。")
+
+
+class ErrorResponse(BaseModel):
+    detail: str = Field(description="错误的机器可读说明。")
+
+
+class HealthResponse(BaseModel):
+    status: str
+    service: str
+
+
+class ExistResponse(BaseModel):
     ok: bool
+
+
+class NavigateResponse(BaseModel):
+    status: str
+    count: int = Field(description="命令已广播到的当前 SSE 客户端数量。")
+
+
+class WorkMergeResponse(BaseModel):
+    ok: bool
+    serial_number: str
+    data: Optional[Dict[str, Any]] = Field(description="扩展回传的 `merged` 对象。")
+    per_site: Dict[str, Any] = Field(description="扩展回传的 `per_site` 对象；无值时为空对象。")
     error: Optional[str] = None
-    content_base64: Optional[str] = None
+
+
+class ActressFetchResponse(BaseModel):
+    ok: bool
+    actress_jp_name: str
+    data: Optional[Dict[str, Any]] = Field(description="扩展回传的女优资料。")
+    error: Optional[str] = None
+
+
+class TopActressesResponse(BaseModel):
+    ok: bool
+    names: List[str]
+    error: Optional[str] = None
+
+
+class ImageResponse(BaseModel):
+    success: bool
+    image: Optional[str] = Field(description="图片原始字节的 Base64；失败时为 null。")
+    message: Optional[str] = Field(default=None, description="失败或超时的中文说明。")
 
 
 def _target_url(path: str, query: str) -> str:
@@ -193,25 +264,34 @@ async def _broadcast_sse(message: Dict[str, Any]) -> None:
             sse_clients.remove(dead)
 
 
-@app.get("/api/v1/health")
+@app.get(
+    "/api/v1/health",
+    tags=["服务"],
+    summary="健康检查",
+    response_model=HealthResponse,
+)
 async def health() -> dict[str, str]:
     logger.debug("health check sse_clients=%s", len(sse_clients))
-    return {"status": "ok", "service": "DarkEye Extension Worker"}
+    return {"status": "ok", "service": "Mosaic Bridge"}
 
 
-@app.get("/api/v1/exist")
+@app.get(
+    "/api/v1/exist",
+    tags=["服务"],
+    summary="轻量存活探测",
+    response_model=ExistResponse,
+)
 async def exist() -> dict[str, bool]:
     """供外部软件探测本服务是否在线（轻量、无副逻辑）。"""
     return {"ok": True}
 
 
-class NavigateCommand(BaseModel):
-    url: str
-    target: str = "new_tab"  # new_tab 或 current_tab
-    context: Optional[Dict[str, Any]] = None
-
-
-@app.post("/api/v1/navigate")
+@app.post(
+    "/api/v1/navigate",
+    tags=["扩展命令"],
+    summary="向已连接扩展广播打开页面命令",
+    responses={200: {"model": NavigateResponse}},
+)
 async def send_navigate(command: NavigateCommand) -> dict[str, Any]:
     """向本机已连接 SSE 的扩展广播导航（扩展在 56790 /events 连接，不由主服务 56789 推送）。"""
     logger.info("Broadcasting navigate command: %s", command)
@@ -227,7 +307,13 @@ async def send_navigate(command: NavigateCommand) -> dict[str, Any]:
     return {"status": "success", "count": len(sse_clients)}
 
 
-@app.get("/api/v1/work/{serial_number}")
+@app.get(
+    "/api/v1/work/{serial_number}",
+    tags=["扩展命令"],
+    summary="抓取并合并指定番号的多站数据",
+    description="下发 `work_merge_fetch` SSE 事件并等待扩展回调，最长 120 秒。",
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 504: {"model": ErrorResponse}, 200: {"model": WorkMergeResponse}},
+)
 async def get_work_merge(serial_number: str):
     sn = serial_number.strip()
     if not sn:
@@ -282,7 +368,14 @@ async def get_work_merge(serial_number: str):
             _work_merge_futures.pop(request_id, None)
 
 
-@app.post("/api/v1/work-merge-result")
+@app.post(
+    "/api/v1/work-merge-result",
+    tags=["扩展回调"],
+    summary="回传多站合并抓取结果",
+    description="仅接受与等待中的 `request_id` 匹配的结果；未知或已完成的 ID 返回 `ignored`。",
+    response_model=StatusResponse,
+    responses={400: {"model": ErrorResponse}},
+)
 async def receive_work_merge_result(body: WorkMergeResultBody):
     rid = (body.request_id or "").strip()
     if not rid:
@@ -311,7 +404,13 @@ async def receive_work_merge_result(body: WorkMergeResultBody):
     return {"status": "success"}
 
 
-@app.get("/api/v1/actress/{actress_jp_name}")
+@app.get(
+    "/api/v1/actress/{actress_jp_name}",
+    tags=["扩展命令"],
+    summary="抓取 Minnano 女优资料",
+    description="下发 `minnano_actress_fetch` SSE 事件并等待扩展回调，最长 120 秒。",
+    responses={400: {"model": ErrorResponse}, 503: {"model": ErrorResponse}, 504: {"model": ErrorResponse}, 200: {"model": ActressFetchResponse}},
+)
 async def get_actress_minnano(
     actress_jp_name: str,
     minnano_url: Optional[str] = Query(
@@ -372,7 +471,14 @@ async def get_actress_minnano(
             _actress_fetch_names.pop(request_id, None)
 
 
-@app.post("/api/v1/actress-fetch-result")
+@app.post(
+    "/api/v1/actress-fetch-result",
+    tags=["扩展回调"],
+    summary="回传 Minnano 女优抓取结果",
+    description="仅接受与等待中的 `request_id` 匹配的结果；未知或已完成的 ID 返回 `ignored`。",
+    response_model=StatusResponse,
+    responses={400: {"model": ErrorResponse}},
+)
 async def receive_actress_fetch_result(body: ActressFetchResultBody):
     rid = (body.request_id or "").strip()
     if not rid:
@@ -401,7 +507,13 @@ async def receive_actress_fetch_result(body: ActressFetchResultBody):
     return {"status": "success"}
 
 
-@app.get("/api/v1/top-actresses")
+@app.get(
+    "/api/v1/top-actresses",
+    tags=["扩展命令"],
+    summary="抓取 Javtxt 热门女优列表",
+    description="下发 `javtxt_top_actresses_fetch` SSE 事件并等待扩展回调，最长 120 秒。",
+    responses={503: {"model": ErrorResponse}, 504: {"model": ErrorResponse}, 200: {"model": TopActressesResponse}},
+)
 async def get_top_actresses():
     if len(sse_clients) == 0:
         raise HTTPException(
@@ -440,7 +552,14 @@ async def get_top_actresses():
             _top_actresses_futures.pop(request_id, None)
 
 
-@app.post("/api/v1/top-actresses-result")
+@app.post(
+    "/api/v1/top-actresses-result",
+    tags=["扩展回调"],
+    summary="回传热门女优列表",
+    description="仅接受与等待中的 `request_id` 匹配的结果；未知或已完成的 ID 返回 `ignored`。",
+    response_model=StatusResponse,
+    responses={400: {"model": ErrorResponse}},
+)
 async def receive_top_actresses_result(body: TopActressesResultBody):
     rid = (body.request_id or "").strip()
     if not rid:
@@ -465,7 +584,13 @@ async def receive_top_actresses_result(body: TopActressesResultBody):
     return {"status": "success"}
 
 
-@app.post("/api/v1/image")
+@app.post(
+    "/api/v1/image",
+    tags=["扩展命令"],
+    summary="通过浏览器下载封面图",
+    description="下发 `fetch_cover_image` SSE 事件。无扩展连接或在 30 秒内超时均返回 HTTP 200 与 `success=false`。",
+    responses={400: {"model": ErrorResponse}, 200: {"model": ImageResponse}},
+)
 async def image_by_url(body: ImageByUrlBody):
     image_url = (body.url or "").strip()
     if not _allowed_any_http_cover_url(image_url):
@@ -502,7 +627,14 @@ async def image_by_url(body: ImageByUrlBody):
             _image_fetch_futures.pop(rid, None)
 
 
-@app.post("/api/v1/cover-image-fetch-result")
+@app.post(
+    "/api/v1/cover-image-fetch-result",
+    tags=["扩展回调"],
+    summary="回传封面图 Base64 数据",
+    description="Base64 解码后的图片必须介于 5 KiB 与 30 MiB 之间。",
+    response_model=StatusResponse,
+    responses={400: {"model": ErrorResponse}},
+)
 async def receive_cover_image_fetch_result(body: CoverImageFetchResult):
     rid = (body.request_id or "").strip()
     if not rid:
@@ -561,37 +693,73 @@ async def receive_cover_image_fetch_result(body: CoverImageFetchResult):
     return {"status": "success"}
 
 
-@app.post("/api/v1/check_existence")
+@app.post(
+    "/api/v1/check_existence",
+    tags=["主程序代理"],
+    summary="代理主程序的批量查重接口",
+    description="请求体、响应体与状态码原样转发至桌面主程序；请以主程序接口文档为准。上游不可用时返回 502。",
+    responses={502: {"model": ErrorResponse}},
+)
 async def proxy_check_existence(request: Request) -> Response:
     # 插件批量查重依赖主程序数据库，转发到软件本体。
     return await _forward(request, "api/v1/check_existence")
 
 
-@app.post("/api/v1/minnano-actress-capture")
+@app.post(
+    "/api/v1/minnano-actress-capture",
+    tags=["主程序代理"],
+    summary="代理 Minnano 采集提示",
+    description="请求体、响应体与状态码由桌面主程序定义并原样透传；上游不可用时返回 502。",
+    responses={502: {"model": ErrorResponse}},
+)
 async def proxy_minnano_actress_capture(request: Request) -> Response:
     # 插件采集提示需回到主程序，触发 UI/编辑流。
     return await _forward(request, "api/v1/minnano-actress-capture")
 
 
-@app.post("/api/v1/capture/one")
+@app.post(
+    "/api/v1/capture/one",
+    tags=["主程序代理"],
+    summary="代理一键采集提示",
+    description="请求体、响应体与状态码由桌面主程序定义并原样透传；上游不可用时返回 502。",
+    responses={502: {"model": ErrorResponse}},
+)
 async def proxy_capture_one(request: Request) -> Response:
     # 插件一键采集提示，交由主程序桥接。
     return await _forward(request, "api/v1/capture/one")
 
 
-@app.post("/api/v1/crawler-backlog-warning")
+@app.post(
+    "/api/v1/crawler-backlog-warning",
+    tags=["主程序代理"],
+    summary="代理采集拥塞提示",
+    description="请求体、响应体与状态码由桌面主程序定义并原样透传；上游不可用时返回 502。",
+    responses={502: {"model": ErrorResponse}},
+)
 async def proxy_crawler_backlog_warning(request: Request) -> Response:
     # 插件拥塞提示，转发给主程序弹窗。
     return await _forward(request, "api/v1/crawler-backlog-warning")
 
 
-@app.post("/api/v1/cloudflare-challenge-notify")
+@app.post(
+    "/api/v1/cloudflare-challenge-notify",
+    tags=["主程序代理"],
+    summary="代理 Cloudflare 挑战提示",
+    description="请求体、响应体与状态码由桌面主程序定义并原样透传；上游不可用时返回 502。",
+    responses={502: {"model": ErrorResponse}},
+)
 async def proxy_cloudflare_challenge_notify(request: Request) -> Response:
     # 插件反爬挑战提示，转发给主程序弹窗。
     return await _forward(request, "api/v1/cloudflare-challenge-notify")
 
 
-@app.get("/events")
+@app.get(
+    "/events",
+    tags=["事件流"],
+    summary="建立浏览器扩展 SSE 长连接",
+    description="响应为 `text/event-stream`。Worker 下发 `navigate`、`work_merge_fetch`、`minnano_actress_fetch`、`javtxt_top_actresses_fetch` 或 `fetch_cover_image` JSON 事件。",
+    responses={200: {"description": "持续输出 SSE `data: <JSON>\\n\\n` 帧。", "content": {"text/event-stream": {}}}},
+)
 async def sse_endpoint(request: Request):
     async def event_generator():
         client_queue = asyncio.Queue()
@@ -620,6 +788,11 @@ async def sse_endpoint(request: Request):
 @app.api_route(
     "/api/v1/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    tags=["主程序代理"],
+    summary="代理未显式实现的主程序 API",
+    description="除 Worker 自有的显式路由外，`/api/v1/*` 请求会原样转发至桌面主程序。请求体、响应体、状态码和所需参数以主程序接口契约为准；上游不可用时返回 502。",
+    responses={502: {"model": ErrorResponse}},
+    include_in_schema=False,
 )
 async def proxy_browser_plugin_api(request: Request, path: str) -> Response:
     # 其余插件/联调请求走主程序；核心四个 API 由本服务显式覆盖执行。

@@ -1,179 +1,155 @@
-# jav-crawler-server
+<div align="center">
+  <img src="docs/assets/mosaic-bridge-logo.png" width="152" alt="Mosaic Bridge logo">
 
-<p align="center">
-  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&amp;logoColor=white">
-  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.109%2B-009688?logo=fastapi&amp;logoColor=white">
-  <img alt="Uvicorn" src="https://img.shields.io/badge/Uvicorn-ASGI-4051B5?logo=uvicorn&amp;logoColor=white">
-  <img alt="License: Proprietary" src="https://img.shields.io/badge/License-Proprietary-lightgrey">
-</p>
+  # Mosaic Bridge
 
-面向 **DarkEye** 桌面套件的本机 **扩展 Worker 网关**：用 **FastAPI** 跑在 `127.0.0.1:56790`，与浏览器扩展通过 **SSE（`/events`）** 建立长连接，把「必须在真实浏览器里完成」的请求（合并抓取、女优页、封面图等）交给扩展执行；其余与数据库、UI 相关的接口则 **反向代理** 到桌面主程序（默认 `127.0.0.1:56789`）。
+  **让桌面应用与浏览器扩展稳定协作的本地桥接服务。**
 
-仓库内同时包含 **Chrome / Firefox** 两套扩展源码（`extensions/`），用于在本地页面中采集并回传数据。**不向远端服务器上传业务数据**（扩展说明见各扩展目录下的 `README.txt`）。
+  [快速开始](#快速开始) · [API 概览](#api-概览) · [架构](#架构) · [开发调试](#开发调试)
 
----
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.109%2B-009688?logo=fastapi&logoColor=white">
+  <img alt="Local only" src="https://img.shields.io/badge/Network-localhost_only-1f6feb">
+  <img alt="License: Proprietary" src="https://img.shields.io/badge/License-Proprietary-6e7681">
+</div>
 
-## 架构概览
+<br>
+
+Mosaic Bridge 是 **DarkEye 桌面套件**的本地扩展网关。它运行在 `127.0.0.1:56790`，通过 **SSE** 将必须在真实浏览器中完成的采集任务交给 Chrome 或 Firefox 扩展执行，并将其他桌面端接口安全地转发到主程序。
+
+> **隐私优先**：服务和扩展默认只在本机通信，不会将业务数据上传到远端服务器。
+
+## 它负责什么
+
+| 能力 | 说明 |
+|---|---|
+| 浏览器协作 | 向已连接扩展推送导航、合并采集、人物页与封面抓取任务。 |
+| 可靠回传 | 以 `request_id` 对齐任务和异步回调；未连接或超时会返回清晰的错误。 |
+| 桌面端桥接 | 将查重、采集流程和提示等接口转发给运行在 `56789` 的主程序。 |
+| 本地运行 | 默认仅绑定 `127.0.0.1`，无需暴露公网端口。 |
+
+## 架构
 
 ```text
-桌面主程序 (56789)  ←── HTTP 转发 ──  Worker (56790, 本仓库 app.py)
-                              ↑
-                              │ SSE + REST（同端口）
-                              │
-                       浏览器扩展（Chrome / Firefox）
+┌──────────────────┐     HTTP 转发      ┌────────────────────────┐
+│  DarkEye Desktop │ ─────────────────► │     Mosaic Bridge      │
+│     :56789       │ ◄───────────────── │       :56790           │
+└──────────────────┘                    └───────────┬────────────┘
+                                                     │ SSE / REST
+                                       ┌─────────────┴─────────────┐
+                                       │                           │
+                              ┌────────▼────────┐        ┌────────▼────────┐
+                              │ Chrome Extension │        │ Firefox Extension│
+                              └─────────────────┘        └─────────────────┘
 ```
 
-- **Worker（本服务）**：扩展只连 **56790**；需要浏览器出马的任务由 Worker 经 SSE 下发，`request_id` 与 Future 对齐后等待扩展 POST 结果。
-- **主程序**：`check_existence`、一键采集、Minnano 采集提示、拥塞/Cloudflare 提示等走 **HTTP 转发** 到 `DARKEYE_MAIN_BASE_URL`。
-- **兜底代理**：未在本文件中显式实现的 `/api/v1/{path}` 会 **原样转发** 到主程序（见 `app.py` 末尾 `proxy_browser_plugin_api`）。
+## 快速开始
 
----
+### 1. 安装依赖
 
-## 环境要求
+项目使用 [uv](https://docs.astral.sh/uv/) 管理 Python 与依赖。先安装 uv，再在项目根目录执行：
 
-- Python **3.10+**
-- 与扩展、主程序同一台机器上运行（默认全程 `localhost`）
-
----
-
-## 安装与运行
-
-### 方式一：虚拟环境 + pip（推荐与 `pyproject.toml` 一致）
-
-```bash
-cd jav-crawler-server
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux / macOS
-# source .venv/bin/activate
-
-pip install -e .
+```powershell
+uv sync
 ```
 
-启动 Worker：
+### 2. 启动服务
 
-```bash
-darkeye-extension-worker
+```powershell
+uv run mosaic-bridge
 ```
 
-或直接：
+也可直接运行：
 
-```bash
-python main.py
+```powershell
+uv run python main.py
 ```
 
-默认监听：**http://127.0.0.1:56790**
+启动后访问：
 
-### 方式二：仅安装依赖、不安装包
+- [Swagger UI](http://127.0.0.1:56790/docs)
+- [ReDoc](http://127.0.0.1:56790/redoc)
+- [健康检查](http://127.0.0.1:56790/api/v1/health)
 
-```bash
-pip install fastapi "uvicorn[standard]" httpx
-python main.py
+### 3. 加载浏览器扩展
+
+在浏览器的开发者模式中，加载以下目录中的 `manifest.json`：
+
+- `extensions/chrome_capture/` — Chrome（Manifest V3）
+- `extensions/firefox_capture/` — Firefox（Manifest V2）
+
+确认扩展中的本地地址指向 `127.0.0.1:56790`。扩展连接 `/events` 后，涉及浏览器的采集接口即可使用。
+
+## 配置
+
+| 环境变量 | 用途 | 默认值 |
+|---|---|---|
+| `DARKEYE_MAIN_BASE_URL` | 桌面主程序 HTTP 根地址（不带末尾 `/`） | `http://127.0.0.1:56789` |
+
+## API 概览
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `GET` | `/api/v1/health` | 服务健康检查 |
+| `GET` | `/events` | 浏览器扩展建立 SSE 长连接 |
+| `POST` | `/api/v1/navigate` | 让已连接扩展打开 URL |
+| `GET` | `/api/v1/work/{serial_number}` | 触发影片信息合并抓取 |
+| `GET` | `/api/v1/actress/{actress_jp_name}` | 触发人物页抓取 |
+| `GET` | `/api/v1/top-actresses` | 获取热门人物列表 |
+| `POST` | `/api/v1/image` | 经扩展获取封面图片 |
+| `*` | `/api/v1/{path}` | 未显式处理的路径代理到桌面主程序 |
+
+完整的 REST、SSE 事件及回调格式见 [API 文档](docs/API.md)。
+
+## 开发调试
+
+### VS Code / Cursor
+
+项目提供 `.vscode/launch.json`：
+
+- **Worker: main.py**：适合断点调试，单进程运行。
+- **Worker: uvicorn app:app**：适合开发时自动重启；由于会启动子进程，复杂断点调试更推荐前者。
+
+选择由 `uv sync` 创建的 `.venv` 解释器即可开始调试。
+
+### 命令行检查
+
+```powershell
+# 服务启动后
+Invoke-RestMethod http://127.0.0.1:56790/api/v1/health
 ```
 
-### 环境变量
+需要扩展参与的接口必须先有扩展连接 `/events`；否则服务会返回 `503` 或对应的失败结果。
 
-| 变量 | 含义 | 默认 |
-|------|------|------|
-| `DARKEYE_MAIN_BASE_URL` | 桌面主程序 HTTP 根地址（勿尾斜杠） | `http://127.0.0.1:56789` |
+### 构建 Windows 可执行文件
 
----
+```powershell
+uv sync --group dev
+.\build-installer.ps1
+```
 
-## 本地调试
+构建产物会输出到 `output/`，并附带 Chrome 与 Firefox 扩展压缩包。
 
-1. **Cursor / VS Code**  
-   - 安装官方 **Python** 扩展（内置/附带 **Debugpy**）。  
-   - 用项目自带的 **`Run and Debug`** 配置（`.vscode/launch.json`）：  
-     - **Worker: main.py** — 适合在 `app.py` 里下断点、单步执行（单进程，无热重载）。  
-     - **Worker: uvicorn app:app** — 改代码自动重启；`--reload` 会起子进程，断点行为因环境而异，复杂问题优先用 `main.py` 配置。  
-   - 在 **运行和调试** 里选好 Python 解释器（建议指向 `.venv`）。
+## 项目结构
 
-2. **命令行快速验证**  
-   - 起服务后浏览器打开：**http://127.0.0.1:56790/docs**（Swagger）或 **GET** `http://127.0.0.1:56790/api/v1/health`。  
-   - 依赖扩展与 SSE 的接口需先加载扩展并连上 **`/events`**，否则会返回 503 等。
+```text
+.
+├── app.py                  # FastAPI、SSE 任务编排与桌面端转发
+├── main.py                 # Uvicorn 启动入口
+├── extensions/             # Chrome / Firefox 扩展源码
+├── docs/
+│   ├── API.md              # 接口与事件说明
+│   └── assets/             # 品牌资源
+├── build-installer.ps1     # Windows 构建脚本
+└── pyproject.toml          # 包元数据与依赖
+```
 
-3. **日志**  
-   - Logger 名为 **`server2.worker`**。需要更细输出可在代码里把该 logger 设为 `DEBUG`，或暂时在 `main.py` 里 `logging.basicConfig(level=logging.DEBUG)`（按需添加，勿提交敏感环境日志）。
+## 开发说明
 
-4. **与主程序联调**  
-   - 若调试转发类接口，请先启动桌面主程序（默认 **56789**），或设置 `DARKEYE_MAIN_BASE_URL` 指向实际地址。
-
----
-
-## HTTP API 摘要
-
-| 方法 | 路径 | 作用 |
-|------|------|------|
-| GET | `/api/v1/health` | 健康检查 |
-| GET | `/events` | **SSE**，扩展连接；接收 `navigate`、`work_merge_fetch` 等推送 |
-| POST | `/api/v1/navigate` | 向已连接扩展广播打开 URL（`new_tab` / `current_tab`） |
-| GET | `/api/v1/work/{serial_number}` | 按番号触发合并抓取；**需扩展已连 SSE**，否则 503 |
-| POST | `/api/v1/work-merge-result` | 扩展回传合并结果（与 `request_id` 对应） |
-| GET | `/api/v1/actress/{actress_jp_name}` | Minnano 女优抓取；可选 Query `minnano_url` |
-| POST | `/api/v1/actress-fetch-result` | 扩展回传女优抓取结果 |
-| GET | `/api/v1/top-actresses` | Javtxt 榜单女优名列表（经扩展） |
-| POST | `/api/v1/top-actresses-result` | 扩展回传榜单结果 |
-| POST | `/api/v1/image` | 按 URL 取封面图（经扩展拉取并 Base64 回传） |
-| POST | `/api/v1/cover-image-fetch-result` | 扩展回传封面图 Base64 |
-| POST | `/api/v1/check_existence` 等 | 转发主程序（见下表） |
-| `*` | `/api/v1/{path}` | 其余插件路径 **代理到主程序** |
-
-**转发主程序的显式路由（节选）**
-
-- `POST /api/v1/check_existence` — 批量查重（数据库在主程序）
-- `POST /api/v1/minnano-actress-capture` — 采集流程回主程序 UI
-- `POST /api/v1/capture/one` — 一键采集
-- `POST /api/v1/crawler-backlog-warning` — 拥塞提示
-- `POST /api/v1/cloudflare-challenge-notify` — 反爬/挑战提示
-
-**超时（代码常量）**
-
-- 合并/女优/榜单等：`WORK_MERGE_TIMEOUT_SEC = 120`
-- 封面图：`IMAGE_FETCH_TIMEOUT_SEC = 30`
-
-封面图 URL 校验：仅允许 `http` / `https` 且带 host（见 `_allowed_any_http_cover_url`）。
-
----
-
-## 仓库目录
-
-| 路径 | 说明 |
-|------|------|
-| `app.py` | FastAPI 应用：SSE、任务编排、HTTP 转发 |
-| `main.py` | `uvicorn` 入口，默认 `127.0.0.1:56790` |
-| `config.py` | 预留配置（当前可为空） |
-| `pyproject.toml` | 项目元数据与依赖声明（见下文） |
-| `extensions/chrome_capture/` | Chrome（Manifest V3）扩展 |
-| `extensions/firefox_capture/` | Firefox（Manifest V2）扩展 |
-| `extensions/new.md` | 扩展相关笔记 |
-| `extensions/javjhs.txt` | 历史/参考脚本（体积较大） |
-
-加载扩展：在浏览器开发者模式中选择对应 `manifest.json` 所在目录；确保 Worker 已启动且扩展配置的本地地址指向 **56790**（若你改过端口需与 `main.py` 一致）。
-
----
-
-## `pyproject.toml` 说明
-
-本文件使用 [**PEP 621**](https://peps.python.org/pep-0621/) 的 `[project]` 描述包元数据，并用 **setuptools** 作为构建后端，便于 `pip install -e .` 在本地可编辑安装。
-
-| 段 | 作用 |
-|----|------|
-| `[build-system]` | 声明构建工具：`setuptools` + `wheel`，供 pip 构建 wheel/sdist。 |
-| `[project]` | **name / version / description**：PyPI 风格元数据；**readme**：指向本 `README.md`；**requires-python**：与代码中类型注解等一致，当前为 `>=3.10`；**dependencies**：运行时依赖 **FastAPI**、**Uvicorn**（含 standard 额外依赖）、**HTTPX**。 |
-| `[project.scripts]` | 安装后生成控制台命令 **`darkeye-extension-worker`**，等价于调用 `main:main`（即 `main.py` 里的 `main()`）。 |
-| `[tool.setuptools]` **`py-modules`** | 显式列出根目录单文件模块 `app`、`main`、`config`，无 `src/` 包结构时这样 setuptools 才能把模块打进包或 editable 安装。 |
-
-若你不需要「安装成命令」，仍可只用 `pip install -e .` 拉齐依赖，或直接 `pip install -r` 手写 requirements；但单一 `pyproject.toml` 更利于版本与依赖集中管理。
-
----
-
-## 日志
-
-应用使用 logger 名称 **`server2.worker`**。可在运行前配置 `logging` 或依赖 Uvicorn 默认输出。
-
----
+- 依赖和锁文件由 **uv** 管理：使用 `uv sync`、`uv lock` 与 `uv run`，避免直接用 `pip` 修改环境。
+- Worker 的日志名为 `server2.worker`；需要更详细输出时可在本地将该 logger 调至 `DEBUG`。
+- 合并抓取、人物页与榜单任务默认等待 120 秒；封面抓取默认等待 30 秒。
 
 ## 许可
 
-`pyproject.toml` 中 `license` 字段暂标为 **Proprietary**；若你开源请自行改为 SPDX 标识并在仓库中加入许可证全文。
+当前项目为 **Proprietary**。如计划开源，请更新 `pyproject.toml` 中的许可声明，并在仓库内提供对应许可证全文。

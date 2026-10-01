@@ -20,9 +20,9 @@ if (Test-Path __pycache__) {
 # 1. 记录开始时间
 $startTime = Get-Date
 
-# 运行 pyinstaller 打包
+# 通过 uv 在项目锁定的开发环境中运行 PyInstaller
 Write-Host "Building with PyInstaller..."
-pyinstaller --clean --noconfirm --distpath $distDir .\main.spec
+uv run --group dev pyinstaller --clean --noconfirm --distpath $distDir .\main.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
 Write-Host "Zipping browser extensions to $distDir..."

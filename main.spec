@@ -94,6 +94,11 @@ EXCLUDES = (
     'pip',
     'wheel',
     'virtualenv',
+    # frozen 版本固定使用 h11、关闭热重载，且 Worker 只使用 SSE，不需要 Uvicorn 的可选组件
+    'watchfiles',
+    'httptools',
+    'websockets',
+    'yaml',
     #老旧/很少用的网络与协议模块
     'cgi',
     'cgitb',
@@ -153,7 +158,8 @@ a = Analysis(
     runtime_hooks=[],
     excludes=list(EXCLUDES),
     noarchive=False,
-    optimize=0,
+    # 去除 docstring 与 assert，缩小冻结后的字节码体积
+    optimize=2,
 )
 pyz = PYZ(a.pure, a.zipped_data)
 
@@ -164,7 +170,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="info-server",
+    name="mosaic-bridge",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
