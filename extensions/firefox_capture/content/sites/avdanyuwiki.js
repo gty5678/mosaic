@@ -5,6 +5,11 @@
     }
 
     const SEARCH_PREFIX = "https://avdanyuwiki.com/?s=";
+    const CF_NOTIFY_KEY = "darkeye_avdan_cf_desktop_notified";
+    const AVDAN_WAIT_MS = 2000;
+    /** Cloudflare 验证可能需要人工处理：持续等待，不回传失败，避免后台关闭标签。 */
+
+    const avdanWait = { timer: null };
 
     /** 与 ``utils.serial_number.convert_fanza`` / background.js 一致 */
     function convertFanza(serial_number) {
@@ -191,6 +196,83 @@
         return payload;
     }
 
+    function sendRuntimeMessage(payload) {
+        const api = typeof browser !== "undefined" ? browser : chrome;
+        const ret = api.runtime.sendMessage(payload);
+        if (ret && typeof ret.catch === "function") {
+            ret.catch(() => {});
+        }
+    }
+
+    function isAvdanyuwikiCloudflarePage() {
+        const t = document.title || "";
+        if (
+            t.includes("Just a moment") ||
+            t.includes("Attention Required") ||
+            t.includes("请稍候")
+        ) {
+            return true;
+        }
+        if (document.querySelector("#challenge-running")) return true;
+        if (document.querySelector("#cf-wrapper")) return true;
+        if (document.querySelector(".cf-browser-verification")) return true;
+        if (document.querySelector("body.cf-error-details")) return true;
+        if (document.querySelector("#challenge-form")) return true;
+        if (document.querySelector(".cf-turnstile")) return true;
+        if (document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
+            return true;
+        }
+        return false;
+    }
+
+    function clearAvdanCfDesktopNotifyDedupe() {
+        sessionStorage.removeItem(CF_NOTIFY_KEY);
+    }
+
+    /** 本轮任务遇到 Cloudflare 时只通知桌面一次，避免轮询重复弹窗 */
+    function notifyCloudflareChallengeIfNeeded() {
+        if (sessionStorage.getItem(CF_NOTIFY_KEY) === "1") return;
+        sessionStorage.setItem(CF_NOTIFY_KEY, "1");
+        const payload = {
+            command: "notify-cloudflare-challenge",
+            site: "avdanyuwiki",
+            phase: "search",
+            serial: sessionStorage.getItem("id") || "",
+            merge_request_id:
+                sessionStorage.getItem("darkeye_merge_request_id") || "",
+        };
+        sendRuntimeMessage(attachMergeRequestId(payload));
+    }
+
+    function stopAvdanWait() {
+        if (avdanWait.timer !== null) {
+            clearInterval(avdanWait.timer);
+            avdanWait.timer = null;
+        }
+    }
+
+    function runAvdanWaitTick() {
+        const article = findEntryArticle();
+        if (article) {
+            stopAvdanWait();
+            succeedCrawl(parseArticle(article));
+            return;
+        }
+
+        if (isAvdanyuwikiCloudflarePage()) {
+            notifyCloudflareChallengeIfNeeded();
+            return;
+        }
+
+        stopAvdanWait();
+        tryAvdanyuwikiSearch();
+    }
+
+    function startAvdanWait() {
+        if (avdanWait.timer !== null) return;
+        avdanWait.timer = setInterval(runAvdanWaitTick, AVDAN_WAIT_MS);
+    }
+
     function sendResult(ok, data) {
         sessionStorage.setItem("darkeye_auto_parse", "false");
         const payload = attachMergeRequestId({
@@ -201,15 +283,17 @@
             data: data || {},
         });
         console.log("DarkEye avdanyuwiki:", payload);
-        browser.runtime.sendMessage(payload);
+        sendRuntimeMessage(payload);
     }
 
     function failCrawl() {
+        stopAvdanWait();
         sessionStorage.removeItem("darkeye_avdan_phase");
         sendResult(false, {});
     }
 
     function succeedCrawl(data) {
+        stopAvdanWait();
         sessionStorage.removeItem("darkeye_avdan_phase");
         sendResult(true, data);
     }
@@ -224,6 +308,12 @@
         const article = findEntryArticle();
         if (article) {
             succeedCrawl(parseArticle(article));
+            return true;
+        }
+
+        if (isAvdanyuwikiCloudflarePage()) {
+            notifyCloudflareChallengeIfNeeded();
+            startAvdanWait();
             return true;
         }
 
@@ -247,6 +337,8 @@
 
     browser.runtime.onMessage.addListener((message) => {
         if (message.command === "avdanyuwiki-dvdid") {
+            clearAvdanCfDesktopNotifyDedupe();
+            stopAvdanWait();
             sessionStorage.setItem("darkeye_auto_parse", "true");
             sessionStorage.setItem("id", message.serial);
             if (message.mergeRequestId) {
@@ -266,6 +358,11 @@
         sessionStorage.removeItem("darkeye_avdan_resume");
         setTimeout(() => {
             console.log("DarkEye: avdanyuwiki 第二次查询（纯大写番号）加载，继续解析…");
+            tryAvdanyuwikiSearch();
+        }, 800);
+    } else if (sessionStorage.getItem("darkeye_auto_parse") === "true") {
+        setTimeout(() => {
+            console.log("DarkEye: avdanyuwiki 验证页面已重新加载，继续等待或解析…");
             tryAvdanyuwikiSearch();
         }, 800);
     }

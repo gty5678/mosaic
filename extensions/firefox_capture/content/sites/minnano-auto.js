@@ -3,7 +3,12 @@
   if (!window.location.href.includes("minnano-av.com")) return;
 
   const STORAGE_KEY = "darkeye_minnano_auto";
+  const CF_NOTIFY_KEY = "darkeye_minnano_cf_desktop_notified";
   const LOG = "DarkEye: minnano-auto";
+  const WAIT_INTERVAL_MS = 1000;
+  // Cloudflare 的自动验证或人工点击可能要花一些时间。超时前绝不把验证页当成「无匹配」。
+  const PAGE_READY_TIMEOUT_MS = 8 * 60 * 1000;
+  let waitTimer = null;
 
   console.log(LOG, "content script injected", {
     href: location.href,
@@ -11,6 +16,7 @@
   });
 
   function reportFailure(err, ctx) {
+    stopWaiting();
     console.log(LOG, "failure", err, {
       url: location.href,
       jpName: (ctx && ctx.jpName) || undefined,
@@ -26,6 +32,7 @@
   }
 
   function reportSuccess(data, ctx) {
+    stopWaiting();
     const jp = data && data["日文名"];
     console.log(LOG, "success", {
       url: location.href,
@@ -40,6 +47,57 @@
       data: data,
       context: ctx || {},
     });
+  }
+
+  function stopWaiting() {
+    if (waitTimer !== null) {
+      clearTimeout(waitTimer);
+      waitTimer = null;
+    }
+  }
+
+  function isCloudflareChallengePage() {
+    const title = document.title || "";
+    if (
+      /just a moment|attention required|checking your browser|verify you are human/i.test(
+        title
+      )
+    ) {
+      return true;
+    }
+    return !!document.querySelector(
+      "#challenge-running, #challenge-form, #cf-wrapper, .cf-browser-verification, " +
+        ".cf-turnstile, iframe[src*='challenges.cloudflare.com']"
+    );
+  }
+
+  function notifyCloudflareChallengeIfNeeded(state) {
+    if (sessionStorage.getItem(CF_NOTIFY_KEY) === "1") return;
+    sessionStorage.setItem(CF_NOTIFY_KEY, "1");
+    browser.runtime
+      .sendMessage({
+        command: "notify-cloudflare-challenge",
+        site: "minnano",
+        phase: "actress",
+        serial: String((state && state.jpName) || ""),
+      })
+      .catch(() => {});
+  }
+
+  function scheduleRetry(reason) {
+    if (waitTimer !== null) return;
+    console.log(LOG, "page not ready; wait before retry", { reason, url: location.href });
+    waitTimer = setTimeout(() => {
+      waitTimer = null;
+      tryMinnanoAutoRun("wait: " + reason);
+    }, WAIT_INTERVAL_MS);
+  }
+
+  function isReadyActressDetail(Scrape) {
+    if (!Scrape.isActressDetailPage(document)) return false;
+    const section = document.getElementById("main-section");
+    const heading = section && section.querySelector("h1");
+    return !!(heading && (heading.textContent || "").trim());
   }
 
   function tryMinnanoAutoRun(from) {
@@ -67,6 +125,16 @@
     const ctx = Object.assign({ persist: true }, state.context || {});
     if (state.jpName != null) ctx.jpName = state.jpName;
 
+    if (!state.startedAt) {
+      state.startedAt = Date.now();
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    }
+    const elapsedMs = Date.now() - Number(state.startedAt);
+    if (elapsedMs > PAGE_READY_TIMEOUT_MS) {
+      reportFailure("minnano_page_load_timeout", ctx);
+      return;
+    }
+
     console.log(LOG, "run", {
       from,
       url: location.href,
@@ -85,12 +153,21 @@
       return;
     }
 
+    if (isCloudflareChallengePage()) {
+      console.log(LOG, "Cloudflare challenge detected; wait for verification", {
+        elapsedMs,
+      });
+      notifyCloudflareChallengeIfNeeded(state);
+      scheduleRetry("cloudflare");
+      return;
+    }
+
     const headlineEl = document.querySelector(".headline");
     const headlineText = headlineEl
       ? (headlineEl.textContent || "").trim().slice(0, 80)
       : "";
     const isSearch = Scrape.isSearchResultsPage(document);
-    const isDetail = Scrape.isActressDetailPage(document);
+    const isDetail = isReadyActressDetail(Scrape);
     console.log(LOG, "page detection", {
       from,
       isSearchResultsPage: isSearch,
@@ -129,12 +206,18 @@
         reportFailure("minnano_scrape_unavailable", ctx);
         return;
       }
+      // Cloudflare 的中间页仍可能保留 actress123.html 路径；只在真实详情的姓名已就绪时上传。
+      if (!String((data && data["日文名"]) || "").trim()) {
+        scheduleRetry("actress detail content");
+        return;
+      }
+      sessionStorage.removeItem(CF_NOTIFY_KEY);
       reportSuccess(data, ctx);
       return;
     }
 
-    console.log(LOG, "unexpected page (not search nor actress detail)", { from });
-    reportFailure("minnano_auto_unexpected_page", ctx);
+    // 页面刚完成跳转、Cloudflare 正在替换 DOM 时，尚未出现业务页面结构；继续等待而不是回传空数据。
+    scheduleRetry("business page DOM");
   }
 
   function bootFrom(reason) {
@@ -152,7 +235,9 @@
       const payload = {
         jpName: message.jpName,
         context: Object.assign({ persist: true }, message.context || {}),
+        startedAt: Date.now(),
       };
+      sessionStorage.removeItem(CF_NOTIFY_KEY);
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       tryMinnanoAutoRun("runtime message");
     }

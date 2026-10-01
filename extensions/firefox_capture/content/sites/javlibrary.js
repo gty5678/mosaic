@@ -3,6 +3,10 @@
   if (!window.location.href.includes("javlibrary.com")) return;
 
   const CF_NOTIFY_KEY = "darkeye_javlib_cf_desktop_notified";
+  const TASK_STARTED_AT_KEY = "darkeye_javlib_task_started_at";
+  const WAIT_INTERVAL_MS = 1000;
+  const WAIT_TIMEOUT_MS = 8 * 60 * 1000;
+  let waitTimer = null;
 
   function attachMergeRequestId(payload) {
     const mid = sessionStorage.getItem("darkeye_merge_request_id");
@@ -12,7 +16,7 @@
 
   function isJavlibraryCloudflarePage() {
     const t = document.title || "";
-    if (t.includes("Just a moment") || t.includes("Attention Required")) {
+    if (/just a moment|attention required|checking your browser|verify you are human|请稍候|安全验证/i.test(t)) {
       return true;
     }
     if (document.querySelector("#challenge-running")) return true;
@@ -20,7 +24,58 @@
     if (document.querySelector(".cf-browser-verification")) return true;
     if (document.querySelector("body.cf-error-details")) return true;
     if (document.querySelector("#challenge-form")) return true;
+    if (document.querySelector(".cf-turnstile")) return true;
+    if (document.querySelector("iframe[src*='challenges.cloudflare.com']")) return true;
+    const bodyText = document.body ? (document.body.innerText || "") : "";
+    if (/请稍候|正在验证|安全验证|performing security verification|checking your browser|verify you are human/i.test(bodyText)) return true;
     return false;
+  }
+
+  function isJavlibrarySearchDomReady() {
+    if (document.querySelector("#videolist, #video_list, #rightcolumn")) return true;
+    const bodyText = document.body ? (document.body.innerText || "") : "";
+    return /検索結果|搜索结果|no results|not found|見つかりません/i.test(bodyText);
+  }
+
+  function stopWaiting() {
+    if (waitTimer !== null) {
+      clearTimeout(waitTimer);
+      waitTimer = null;
+    }
+  }
+
+  function clearTaskState() {
+    stopWaiting();
+    sessionStorage.setItem("darkeye_auto_parse", "false");
+    sessionStorage.removeItem(TASK_STARTED_AT_KEY);
+  }
+
+  /** 保留任务，直到 Cloudflare 完成并出现真实搜索/详情 DOM。 */
+  function waitForBusinessPage(reason) {
+    if (waitTimer !== null) return;
+    const savedStartedAt = sessionStorage.getItem(TASK_STARTED_AT_KEY);
+    const startedAt = Number(savedStartedAt || Date.now());
+    if (!savedStartedAt) sessionStorage.setItem(TASK_STARTED_AT_KEY, String(startedAt));
+    if (Date.now() - startedAt > WAIT_TIMEOUT_MS) {
+      console.warn("DarkEye: JavLibrary Cloudflare/page wait timed out");
+      clearTaskState();
+      browser.runtime.sendMessage(attachMergeRequestId({
+        command: "send_crawler_result",
+        id: sessionStorage.getItem("id"), web: "javlib", result: false,
+        data: { darkeye_error: "cloudflare_timeout" }
+      }));
+      return;
+    }
+    sessionStorage.setItem("darkeye_auto_parse", "true");
+    console.log("DarkEye: JavLibrary waiting for business page", reason);
+    waitTimer = setTimeout(() => {
+      waitTimer = null;
+      if (window.location.href.startsWith("https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=")) {
+        search_javlibrary();
+      } else {
+        parse_data_javlibrary();
+      }
+    }, WAIT_INTERVAL_MS);
   }
 
   function clearJavlibCfDesktopNotifyDedupe() {
@@ -45,6 +100,8 @@
     if (message.command === "javlibrary-dvdid"){
         console.log("DarkEye: JavLibrary 开始爬虫任务...");
         clearJavlibCfDesktopNotifyDedupe();
+        stopWaiting();
+        sessionStorage.setItem(TASK_STARTED_AT_KEY, String(Date.now()));
         sessionStorage.setItem('darkeye_auto_parse', 'true')
         sessionStorage.setItem('id', message.serial)
         if (message.mergeRequestId) {
@@ -62,14 +119,16 @@
     if (window.location.href.startsWith("https://www.javlibrary.com/cn/vl_searchbyid.php?keyword=")){
         const videos = document.querySelectorAll('div.video');
         if (videos.length === 0) {
-            if (isJavlibraryCloudflarePage()) {
-                console.log("DarkEye: 遇到 Cloudflare，暂不报错，等待自动重试...");
-                notifyCloudflareChallengeIfNeeded();
-                sessionStorage.setItem('darkeye_auto_parse', 'true');
+            if (isJavlibraryCloudflarePage() || !isJavlibrarySearchDomReady()) {
+                if (isJavlibraryCloudflarePage()) {
+                    console.log("DarkEye: 遇到 Cloudflare，暂不报错，等待自动重试...");
+                    notifyCloudflareChallengeIfNeeded();
+                }
+                waitForBusinessPage("Cloudflare or unloaded search");
                 return false;
             }
             console.log("该番号javlib没有搜索结果");
-            sessionStorage.setItem('darkeye_auto_parse', 'false')
+            clearTaskState();
             browser.runtime.sendMessage(attachMergeRequestId({
                 command: "send_crawler_result",
                 id: sessionStorage.getItem('id'),
@@ -113,7 +172,12 @@
                 "DarkEye: JavLibrary 详情页 Cloudflare，等待手动验证后继续..."
             );
             notifyCloudflareChallengeIfNeeded();
-            sessionStorage.setItem("darkeye_auto_parse", "true");
+            waitForBusinessPage("Cloudflare detail");
+            return;
+        }
+        // URL 在验证期间可能仍是详情地址；没有详情关键节点时不能上传空对象。
+        if (!document.querySelector("#video_id .text")) {
+            waitForBusinessPage("detail DOM");
             return;
         }
         const data = {};
@@ -165,7 +229,7 @@
           }).filter(Boolean);
         }
 
-        sessionStorage.setItem('darkeye_auto_parse', 'false');
+        clearTaskState();
         clearJavlibCfDesktopNotifyDedupe();
         console.log(data);
         if (data) {
@@ -182,7 +246,6 @@
   }
 
   if (sessionStorage.getItem('darkeye_auto_parse') === 'true') {
-      sessionStorage.removeItem('darkeye_auto_parse');
       const isVlSearchById =
           window.location.href.startsWith(
               "https://www.javlibrary.com/cn/vl_searchbyid.php?keyword="

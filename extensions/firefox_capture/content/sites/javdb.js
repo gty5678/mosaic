@@ -7,8 +7,8 @@
 
     const CF_NOTIFY_KEY = "darkeye_javdb_cf_desktop_notified";
     const JAVDB_WAIT_MS = 2000;
-    /** Cloudflare 轮询约 28s；超时后上报 cloudflare_timeout（不整页 reload，避免打断手动验证） */
-    const JAVDB_WAIT_MAX_ATTEMPTS = 14;
+    /** Cloudflare 可要求人工验证；最多等待 8 分钟且不刷新页面，以免打断验证。 */
+    const JAVDB_WAIT_MAX_ATTEMPTS = 240;
     /** 非 CF 时等待 .video-detail 的最大轮次（约 16s） */
     const JAVDB_DETAIL_SKELETON_MAX = 8;
 
@@ -51,6 +51,8 @@
         if (document.querySelector(".cf-browser-verification")) return true;
         if (document.querySelector("body.cf-error-details")) return true;
         if (document.querySelector("#challenge-form")) return true;
+        if (document.querySelector(".cf-turnstile")) return true;
+        if (document.querySelector("iframe[src*='challenges.cloudflare.com']")) return true;
         return false;
     }
 

@@ -50,6 +50,7 @@ const CRAWLER_TAB_MAX_AUTO_RELOAD = 1;
 const tabCrawlerReloadState = new Map();
 /** 已安排 reload，避免 onErrorOccurred 与 complete 双触发重复计数 */
 const tabCrawlerReloadInFlight = new Set();
+const pendingCrawlerMessageInFlight = new Set();
 
 function clearTabCrawlerReloadState(tabId) {
   tabCrawlerReloadState.delete(tabId);
@@ -702,6 +703,67 @@ function sendMinnanoActressAutoMessage(tabId, msg, serial) {
   trySend(1);
 }
 
+function sendCrawlerMessageWithRetry(tabId, msg, label) {
+  const maxAttempts = 6;
+  pendingCrawlerMessageInFlight.add(tabId);
+
+  function finishSuccess(attemptNum) {
+    console.log(
+      "DarkEye: crawler sendMessage ok",
+      label,
+      "tabId=",
+      tabId,
+      "attempt=",
+      attemptNum
+    );
+    pendingCrawlerMessageInFlight.delete(tabId);
+    pendingCrawlers.delete(tabId);
+    clearTabCrawlerReloadState(tabId);
+  }
+
+  function finishFailure(err) {
+    pendingCrawlerMessageInFlight.delete(tabId);
+    console.error(
+      "DarkEye: crawler sendMessage FAILED after",
+      maxAttempts,
+      "attempts",
+      label,
+      "tabId=",
+      tabId,
+      err
+    );
+    abandonPendingCrawlerTab(tabId, "sendMessage-failed:" + label);
+  }
+
+  function trySend(attemptNum) {
+    browser.tabs
+      .sendMessage(tabId, msg)
+      .then(() => finishSuccess(attemptNum))
+      .catch((err) => {
+        if (attemptNum < maxAttempts && pendingCrawlers.has(tabId)) {
+          const wait = 100 * attemptNum;
+          console.warn(
+            "DarkEye: crawler sendMessage failed; retry",
+            label,
+            "tabId=",
+            tabId,
+            "attempt=",
+            attemptNum + 1,
+            "in",
+            wait,
+            "ms",
+            err
+          );
+          setTimeout(() => trySend(attemptNum + 1), wait);
+          return;
+        }
+        finishFailure(err);
+      });
+  }
+
+  trySend(1);
+}
+
 // 主框架导航失败：仅处理专用爬虫窗口内待下发的标签（pendingCrawlers）
 browser.webNavigation.onErrorOccurred.addListener((details) => {
   if (details.frameId !== 0) return;
@@ -723,6 +785,9 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     maybeNotifyCrawlerBacklog();
   }
   if (changeInfo.status === "complete" && pendingCrawlers.has(tabId)) {
+    if (pendingCrawlerMessageInFlight.has(tabId)) {
+      return;
+    }
     const pageUrl = (tab && tab.url) || "";
     if (isFirefoxInternalErrorPageUrl(pageUrl)) {
       tryAutoReloadPendingCrawlerTab(tabId, pageUrl, "error-page-url");
@@ -734,29 +799,29 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     if (task.type === "javlib") {
         const msg = { command: "javlibrary-dvdid", serial: task.serial };
         if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-        browser.tabs.sendMessage(tabId, msg);
+        sendCrawlerMessageWithRetry(tabId, msg, "javlib");
         console.log("javlib爬虫开始:" + tabId);
     } else if (task.type === "javdb") {
         const msg = { command: "javdb-dvdid", serial: task.serial };
         if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-        browser.tabs.sendMessage(tabId, msg);
+        sendCrawlerMessageWithRetry(tabId, msg, "javdb");
         console.log("javdb爬虫开始:" + tabId);
     } else if (task.type === "javtxt") {
         const msg = { command: "javtxt-dvdid", serial: task.serial };
         if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-        browser.tabs.sendMessage(tabId, msg);
+        sendCrawlerMessageWithRetry(tabId, msg, "javtxt");
       console.log("javtxt爬虫开始:" + tabId);
     } else if (task.type === "javtxt-top-actresses") {
       const msg = { command: "javtxt-parse-top-actresses" };
       if (task.apiRequestId) {
         msg.request_id = task.apiRequestId;
       }
-      browser.tabs.sendMessage(tabId, msg);
+      sendCrawlerMessageWithRetry(tabId, msg, "javtxt-top-actresses");
       console.log("javtxt top-actresses:" + tabId);
     } else if (task.type === "avdanyuwiki") {
         const msg = { command: "avdanyuwiki-dvdid", serial: task.serial };
         if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-        browser.tabs.sendMessage(tabId, msg);
+        sendCrawlerMessageWithRetry(tabId, msg, "avdanyuwiki");
       console.log("avdanyuwiki爬虫开始:" + tabId);
     } else if (task.type === "minnano") {
       const msg = {
@@ -770,8 +835,10 @@ browser.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     
     // 注意：如果我们采用 Content Script 自动接力模式，这里可能不需要删除，每次刷新时判断有无任务，有就处理，直接任务全部结束
     // 为了防止多次触发，通常还是删除，依赖页面内的 sessionStorage 自动接力
-    pendingCrawlers.delete(tabId);
-    clearTabCrawlerReloadState(tabId);
+    if (task.type === "minnano") {
+      pendingCrawlers.delete(tabId);
+      clearTabCrawlerReloadState(tabId);
+    }
   }
 });
 
@@ -786,6 +853,8 @@ browser.windows.onRemoved.addListener((windowId) => {
 
 browser.tabs.onRemoved.addListener((tabId) => {
   tabNavigateContext.delete(tabId);
+  pendingCrawlers.delete(tabId);
+  pendingCrawlerMessageInFlight.delete(tabId);
   clearTabCrawlerReloadState(tabId);
   if (crawlerWindowId !== null) {
     maybeNotifyCrawlerBacklog();
