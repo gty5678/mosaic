@@ -2,9 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Worker: main.py（断点调试，无热重载）",
+      "name": "Worker: main.py（uv，断点调试，无热重载）",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "uv: sync",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
       "program": "${workspaceFolder}/main.py",
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}",
@@ -14,9 +19,15 @@
       }
     },
     {
-      "name": "Worker: uvicorn app:app（热重载，断点可能只在子进程生效）",
+      "name": "Worker: uvicorn app:app（uv，热重载）",
       "type": "debugpy",
       "request": "launch",
+      "preLaunchTask": "uv: sync",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "windows": {
+        "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+      },
+      "subProcess": true,
       "module": "uvicorn",
       "args": [
         "app:app",

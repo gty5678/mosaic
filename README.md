@@ -5,12 +5,12 @@
 
   **让桌面应用与浏览器扩展稳定协作的本地桥接服务。**
 
-  [快速开始](#快速开始) · [API 概览](#api-概览) · [架构](#架构) · [开发调试](#开发调试)
+  [快速开始](#快速开始) · [API 概览](#api-概览) · [架构](#架构) · [文档](#文档) · [开发调试](#开发调试)
 
   <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-0.109%2B-009688?logo=fastapi&logoColor=white">
   <img alt="Local only" src="https://img.shields.io/badge/Network-localhost_only-1f6feb">
-  <img alt="License: Proprietary" src="https://img.shields.io/badge/License-Proprietary-6e7681">
+  <img alt="License: GPL v3" src="https://img.shields.io/badge/License-GPL--3.0--only-6e7681">
 </div>
 
 <br>
@@ -42,6 +42,22 @@ Mosaic Bridge 是 **DarkEye 桌面套件**的本地扩展网关。它运行在 `
                               │ Chrome Extension │        │ Firefox Extension│
                               └─────────────────┘        └─────────────────┘
 ```
+
+### 一次采集如何完成
+
+```text
+DarkEye Desktop ── GET /api/v1/work/{serial_number} ──► Mosaic Bridge
+                                                        │
+                                             SSE 命令（含 request_id）
+                                                        ▼
+                                              Browser Extension
+                                                        │
+                                  POST 回调（同一 request_id）
+                                                        ▼
+DarkEye Desktop ◄──── 合并结果或超时错误 ─────── Mosaic Bridge
+```
+
+Bridge 负责调度和关联请求，扩展负责在真实浏览器环境中访问及解析页面，桌面主程序负责消费结果。`request_id` 是异步命令与回调的关联键，扩展回调时必须原样带回。
 
 ## 快速开始
 
@@ -101,16 +117,25 @@ uv run python main.py
 
 完整的 REST、SSE 事件及回调格式见 [API 文档](docs/API.md)。
 
+## 文档
+
+| 文档 | 适用读者 | 内容 |
+|---|---|---|
+| [API 文档](docs/API.md) | 桌面端、扩展集成开发者 | REST、SSE 命令、回调和代理接口契约。 |
+| [扩展开发指南](docs/extension-development.md) | 浏览器扩展开发者 | 本地加载、SSE 生命周期、站点解析器和调试。 |
+| [部署与排障](docs/deployment.md) | 使用者、发布维护者 | 配置、Windows 构建、日志和故障定位。 |
+| [贡献指南](CONTRIBUTING.md) | 贡献者 | 开发环境、变更边界和提交前检查。 |
+
 ## 开发调试
 
 ### VS Code / Cursor
 
 项目提供 `.vscode/launch.json`：
 
-- **Worker: main.py**：适合断点调试，单进程运行。
-- **Worker: uvicorn app:app**：适合开发时自动重启；由于会启动子进程，复杂断点调试更推荐前者。
+- **Worker: main.py（uv，断点调试，无热重载）**：适合断点调试，单进程运行。
+- **Worker: uvicorn app:app（uv，热重载）**：适合开发时自动重启，并启用子进程调试。
 
-选择由 `uv sync` 创建的 `.venv` 解释器即可开始调试。
+安装 VS Code 的 Python 和 Python Debugger 扩展后，选择上述配置并按 **F5**。每次启动前会自动执行 `uv sync`，然后固定使用项目 `.venv` 中的 Python 调试，无需手动激活环境或切换 Conda 解释器。`uv` 需在 VS Code 的 PATH 中可用。
 
 ### 命令行检查
 
@@ -139,8 +164,11 @@ uv sync --group dev
 ├── extensions/             # Chrome / Firefox 扩展源码
 ├── docs/
 │   ├── API.md              # 接口与事件说明
+│   ├── extension-development.md # 浏览器扩展开发指南
+│   ├── deployment.md       # 运行、构建与排障
 │   └── assets/             # 品牌资源
 ├── build-installer.ps1     # Windows 构建脚本
+├── CONTRIBUTING.md          # 贡献指南
 └── pyproject.toml          # 包元数据与依赖
 ```
 
@@ -152,4 +180,4 @@ uv sync --group dev
 
 ## 许可
 
-当前项目为 **Proprietary**。如计划开源，请更新 `pyproject.toml` 中的许可声明，并在仓库内提供对应许可证全文。
+本项目采用 [GNU General Public License v3.0 only](LICENSE)。

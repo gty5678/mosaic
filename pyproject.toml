@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Mosaic Bridge：连接 DarkEye 桌面应用与浏览器扩展的本地 FastAPI 网关。"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Proprietary" }
+license = { text = "GPL-3.0-only" }
 authors = [{ name = "DarkEye" }]
 dependencies = [
     "fastapi>=0.109.0",

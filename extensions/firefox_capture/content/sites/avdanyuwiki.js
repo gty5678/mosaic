@@ -90,30 +90,33 @@
         }
 
         let actor_list = [];
-        let m = text.match(/出演男優：(.+)/);
+        let m = text.match(/出演男優[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             actor_list = splitListByCommaLike(m[1].trim());
         }
 
         let director = "----";
-        m = text.match(/監督：(.+)/);
+        // innerText 可能在标签与链接之间插入换行；同时兼容两种冒号和标签后空格。
+        m = text.match(/監督[^\S\r\n]*[：:][^\S\r\n]*(?:\n[^\S\r\n]*)?([^\r\n]+)/);
         if (m) {
-            director = m[1].trim();
+            const value = m[1].trim();
+            // 标签为空时不能把下一行的「メーカー：…」等字段误当导演。
+            if (value && !/^[^：:]+[：:]/.test(value)) director = value;
         }
 
         let date = "";
-        m = text.match(/配信開始日：(.+)/);
+        m = text.match(/配信開始日[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             date = m[1].trim();
         } else {
-            m = text.match(/商品発売日：(.+)/);
+            m = text.match(/商品発売日[^\S\r\n]*[：:]([^\r\n]+)/);
             if (m) {
                 date = m[1].trim();
             }
         }
 
         let actress_list = [];
-        m = text.match(/出演者?：(.+)/);
+        m = text.match(/出演者?[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             let actress_text = m[1].trim().replace(/—-/g, "");
             const clean_text = actress_text
@@ -123,7 +126,7 @@
         }
 
         let tag_list = [];
-        m = text.match(/ジャンル：(.+)/);
+        m = text.match(/ジャンル[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             let tag_text = m[1].trim().replace(/—-/g, "");
             tag_list = tag_text
@@ -133,13 +136,13 @@
         }
 
         let maker = "----";
-        m = text.match(/メーカー：(.+)/);
+        m = text.match(/メーカー[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             maker = m[1].trim();
         }
 
         let series = "";
-        m = text.match(/シリーズ：(.+)/);
+        m = text.match(/シリーズ[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             series = m[1].trim();
         }
@@ -148,7 +151,7 @@
         }
 
         let label = "";
-        m = text.match(/レーベル：(.+)/);
+        m = text.match(/レーベル[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             label = m[1].trim();
         }
@@ -157,7 +160,7 @@
         }
 
         let runtime = "";
-        m = text.match(/収録時間：\s*([^分]+?)\s*(?:分|min\b)/i);
+        m = text.match(/収録時間[^\S\r\n]*[：:][^\S\r\n]*([^分\r\n]+?)\s*(?:分|min\b)/i);
         if (m) {
             runtime = m[1].trim();
         }

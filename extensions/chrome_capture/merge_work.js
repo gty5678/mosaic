@@ -232,6 +232,16 @@
     return [];
   }
 
+  /** 跳过采集器的空白和纯横线占位符，取第一个有效文本。 */
+  function firstNonEmptyText(...candidates) {
+    for (const value of candidates) {
+      if (typeof value !== "string") continue;
+      const text = value.trim();
+      if (text && !/^[-—–－\s]+$/.test(text)) return text;
+    }
+    return "";
+  }
+
   /**
    * @param {Record<string, object>} results — 键：javlib | javdb | javtxt | avdanyuwiki
    * @param {string} canonicalSerial
@@ -251,37 +261,39 @@
       javtxtResult.release_date ||
       "";
 
-    const director =
-      avdanyuwikiResult.director ||
-      javlibResult.director ||
-      javdbResult.director ||
-      javtxtResult.director ||
-      "";
+    const director = firstNonEmptyText(
+      avdanyuwikiResult.director,
+      javlibResult.director,
+      javdbResult.director,
+      javtxtResult.director,
+    );
 
-    // 与 dict.get("runtime", dict.get("length", ...))：键存在则取该值（含空串），否则下一源
-    let runtime = "";
-    if (Object.prototype.hasOwnProperty.call(avdanyuwikiResult, "runtime")) {
-      const v = avdanyuwikiResult.runtime;
-      runtime = v == null ? "" : v;
-    } else if (Object.prototype.hasOwnProperty.call(javlibResult, "length")) {
-      const v = javlibResult.length;
-      runtime = v == null ? "" : v;
-    } else if (javdbResult.length != null) {
-      runtime = javdbResult.length;
+    // 空串、占位符或 0 表示无有效时长，继续尝试下一来源（单位：分钟）。
+    let runtimeVal = 0;
+    for (const value of [
+      avdanyuwikiResult.runtime,
+      javlibResult.length,
+      javdbResult.length,
+    ]) {
+      const minutes = parseInt(String(value == null ? "" : value).trim(), 10);
+      if (Number.isFinite(minutes) && minutes > 0) {
+        runtimeVal = minutes;
+        break;
+      }
     }
 
-    const actressList =
-      avdanyuwikiResult.actress_list ||
-      javlibResult.actress ||
-      javdbResult.actress ||
-      [];
+    const actressList = firstNonEmptyArray(
+      avdanyuwikiResult.actress_list,
+      javlibResult.actress,
+      javdbResult.actress
+    );
 
-    const maker =
-      avdanyuwikiResult.maker ||
-      javlibResult.maker ||
-      javdbResult.maker ||
-      javtxtResult.maker ||
-      "";
+    const maker = firstNonEmptyText(
+      avdanyuwikiResult.maker,
+      javlibResult.maker,
+      javdbResult.maker,
+      javtxtResult.maker
+    );
 
     let coverList = urls(javlibResult.image).filter(
       (u) => u && typeof u === "string"
@@ -305,18 +317,18 @@
     const javdburl = javdbResult.cover || "";
     if (javdburl) coverList = coverList.concat([javdburl]);
 
-    const avdanSeries = avdanyuwikiResult.series || "";
-    const series =
-      avdanSeries === "" || avdanSeries === "----"
-        ? javdbResult.series || javtxtResult.series || ""
-        : avdanSeries;
+    const series = firstNonEmptyText(
+      avdanyuwikiResult.series,
+      javdbResult.series,
+      javtxtResult.series
+    );
 
-    const label =
-      avdanyuwikiResult.label ||
-      javlibResult.label ||
-      javdbResult.label ||
-      javtxtResult.label ||
-      "";
+    const label = firstNonEmptyText(
+      avdanyuwikiResult.label,
+      javlibResult.label,
+      javdbResult.label,
+      javtxtResult.label
+    );
 
     const tagList = avdanyuwikiResult.tag_list || [];
     const genreJav = javlibResult.genre || [];
@@ -349,14 +361,6 @@
       javlibResult.fanart,
       javdbResult.fanart
     );
-
-    let runtimeVal = 0;
-    try {
-      const r = String(runtime).trim();
-      if (r) runtimeVal = parseInt(r, 10) || 0;
-    } catch (e) {
-      runtimeVal = 0;
-    }
 
     return {
       serial_number: canonicalSerial,
