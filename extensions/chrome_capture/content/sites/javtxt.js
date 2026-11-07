@@ -220,11 +220,12 @@
         const dl = root.querySelector("div.attributes dl");
         if (!dl) return out;
 
-        const dts = dl.querySelectorAll("dt");
-        for (const dt of dts) {
-            const dd = dt.nextElementSibling;
-            if (!dd || dd.tagName.toLowerCase() !== "dd") continue;
-            const key = (dt.textContent || "").replace(/\s+/g, " ").trim();
+        // 兼容 dt 标签 / dd 值，以及 dd 标签 / dt 值两种页面结构。
+        const terms = dl.querySelectorAll("dt, dd");
+        for (const term of terms) {
+            const dd = term.nextElementSibling;
+            if (!dd || !/^(dt|dd)$/i.test(dd.tagName) || dd.tagName === term.tagName) continue;
+            const key = (term.textContent || "").replace(/\s+/g, " ").trim();
             if (key.includes("发行时间")) {
                 const raw = (dd.textContent || "").trim();
                 const m = raw.match(/\d{4}-\d{2}-\d{2}/);
