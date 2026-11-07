@@ -7,10 +7,9 @@
     const SEARCH_PREFIX = "https://avdanyuwiki.com/?s=";
     const CF_NOTIFY_KEY = "darkeye_avdan_cf_desktop_notified";
     const AVDAN_WAIT_MS = 2000;
-    /** Cloudflare 轮询约 28s；超时后上报 cloudflare_timeout（不整页 reload，避免打断手动验证） */
-    const AVDAN_WAIT_MAX_ATTEMPTS = 14;
+    /** Cloudflare 验证可能需要人工处理：持续等待，不回传失败，避免后台关闭标签。 */
 
-    const avdanWait = { timer: null, attempts: 0 };
+    const avdanWait = { timer: null };
 
     /** 与 ``utils.serial_number.convert_fanza`` / background.js 一致 */
     function convertFanza(serial_number) {
@@ -91,30 +90,33 @@
         }
 
         let actor_list = [];
-        let m = text.match(/出演男優：(.+)/);
+        let m = text.match(/出演男優[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             actor_list = splitListByCommaLike(m[1].trim());
         }
 
         let director = "----";
-        m = text.match(/監督：(.+)/);
+        // innerText 可能在标签与链接之间插入换行；同时兼容两种冒号和标签后空格。
+        m = text.match(/監督[^\S\r\n]*[：:][^\S\r\n]*(?:\n[^\S\r\n]*)?([^\r\n]+)/);
         if (m) {
-            director = m[1].trim();
+            const value = m[1].trim();
+            // 标签为空时不能把下一行的「メーカー：…」等字段误当导演。
+            if (value && !/^[^：:]+[：:]/.test(value)) director = value;
         }
 
         let date = "";
-        m = text.match(/配信開始日：(.+)/);
+        m = text.match(/配信開始日[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             date = m[1].trim();
         } else {
-            m = text.match(/商品発売日：(.+)/);
+            m = text.match(/商品発売日[^\S\r\n]*[：:]([^\r\n]+)/);
             if (m) {
                 date = m[1].trim();
             }
         }
 
         let actress_list = [];
-        m = text.match(/出演者?：(.+)/);
+        m = text.match(/出演者?[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             let actress_text = m[1].trim().replace(/—-/g, "");
             const clean_text = actress_text
@@ -124,7 +126,7 @@
         }
 
         let tag_list = [];
-        m = text.match(/ジャンル：(.+)/);
+        m = text.match(/ジャンル[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             let tag_text = m[1].trim().replace(/—-/g, "");
             tag_list = tag_text
@@ -134,13 +136,13 @@
         }
 
         let maker = "----";
-        m = text.match(/メーカー：(.+)/);
+        m = text.match(/メーカー[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             maker = m[1].trim();
         }
 
         let series = "";
-        m = text.match(/シリーズ：(.+)/);
+        m = text.match(/シリーズ[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             series = m[1].trim();
         }
@@ -149,7 +151,7 @@
         }
 
         let label = "";
-        m = text.match(/レーベル：(.+)/);
+        m = text.match(/レーベル[^\S\r\n]*[：:]([^\r\n]+)/);
         if (m) {
             label = m[1].trim();
         }
@@ -158,7 +160,7 @@
         }
 
         let runtime = "";
-        m = text.match(/収録時間：\s*([^分]+?)\s*(?:分|min\b)/i);
+        m = text.match(/収録時間[^\S\r\n]*[：:][^\S\r\n]*([^分\r\n]+?)\s*(?:分|min\b)/i);
         if (m) {
             runtime = m[1].trim();
         }
@@ -198,7 +200,7 @@
     }
 
     function sendRuntimeMessage(payload) {
-        const api = typeof chrome !== "undefined" ? chrome : browser;
+        const api = typeof browser !== "undefined" ? browser : chrome;
         const ret = api.runtime.sendMessage(payload);
         if (ret && typeof ret.catch === "function") {
             ret.catch(() => {});
@@ -207,7 +209,11 @@
 
     function isAvdanyuwikiCloudflarePage() {
         const t = document.title || "";
-        if (t.includes("Just a moment") || t.includes("Attention Required")) {
+        if (
+            t.includes("Just a moment") ||
+            t.includes("Attention Required") ||
+            t.includes("请稍候")
+        ) {
             return true;
         }
         if (document.querySelector("#challenge-running")) return true;
@@ -246,22 +252,9 @@
             clearInterval(avdanWait.timer);
             avdanWait.timer = null;
         }
-        avdanWait.attempts = 0;
-    }
-
-    function sendAvdanCrawlFailure(code) {
-        sendResult(false, { darkeye_error: String(code || "unknown") });
-    }
-
-    function onAvdanWaitTimeout() {
-        stopAvdanWait();
-        sessionStorage.setItem("darkeye_auto_parse", "false");
-        sendAvdanCrawlFailure("cloudflare_timeout");
     }
 
     function runAvdanWaitTick() {
-        avdanWait.attempts += 1;
-
         const article = findEntryArticle();
         if (article) {
             stopAvdanWait();
@@ -271,9 +264,6 @@
 
         if (isAvdanyuwikiCloudflarePage()) {
             notifyCloudflareChallengeIfNeeded();
-            if (avdanWait.attempts >= AVDAN_WAIT_MAX_ATTEMPTS) {
-                onAvdanWaitTimeout();
-            }
             return;
         }
 
@@ -283,7 +273,6 @@
 
     function startAvdanWait() {
         if (avdanWait.timer !== null) return;
-        avdanWait.attempts = 0;
         avdanWait.timer = setInterval(runAvdanWaitTick, AVDAN_WAIT_MS);
     }
 
@@ -372,6 +361,11 @@
         sessionStorage.removeItem("darkeye_avdan_resume");
         setTimeout(() => {
             console.log("DarkEye: avdanyuwiki 第二次查询（纯大写番号）加载，继续解析…");
+            tryAvdanyuwikiSearch();
+        }, 800);
+    } else if (sessionStorage.getItem("darkeye_auto_parse") === "true") {
+        setTimeout(() => {
+            console.log("DarkEye: avdanyuwiki 验证页面已重新加载，继续等待或解析…");
             tryAvdanyuwikiSearch();
         }, 800);
     }

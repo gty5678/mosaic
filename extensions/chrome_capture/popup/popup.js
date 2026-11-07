@@ -27,9 +27,10 @@ function checkServerStatus() {
       console.error("Server check failed:", err);
       serverStatusEl.textContent = "🔴 桌面端未启动";
       serverStatusEl.style.color = "#ff3b30"; // Red
+    })
+    .finally(() => {
+      clearTimeout(timeoutId);
     });
-  
-  clearTimeout(timeoutId);
 }
 
 // Init check

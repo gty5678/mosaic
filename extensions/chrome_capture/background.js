@@ -1,4 +1,4 @@
-// background.js for Chrome (Manifest V3; merge_work 经 importScripts；SSE 在 offscreen，经 sse_command转发)
+// Chrome MV3: business logic follows Firefox; SSE runs in offscreen.html.
 importScripts("merge_work.js");
 
 const SERVER_URL = "http://localhost:56790";
@@ -12,6 +12,7 @@ const CRAWLER_TAB_MAX_AUTO_RELOAD = 1;
 const tabCrawlerReloadState = new Map();
 /** 已安排 reload，避免 onErrorOccurred 与 complete 双触发重复计数 */
 const tabCrawlerReloadInFlight = new Set();
+const pendingCrawlerMessageInFlight = new Set();
 
 function clearTabCrawlerReloadState(tabId) {
   tabCrawlerReloadState.delete(tabId);
@@ -45,7 +46,7 @@ function shouldAutoReloadForNavigationError(errorStr) {
   return true;
 }
 
-/** Chrome 内置错误页 / interstitial（complete 时 tab.url 可见；与 Firefox about:* 分类对齐） */
+/** 是否为 Firefox 内置错误页（complete 时 tab.url 可见） */
 function isChromiumInternalErrorPageUrl(url) {
   if (!url || typeof url !== "string") return false;
   return (
@@ -74,17 +75,17 @@ function abandonPendingCrawlerTab(tabId, reason) {
     clearTabCrawlerReloadState(tabId);
     return;
   }
-  console.warn(
-    "DarkEye: 爬虫标签放弃 pending",
-    "tabId=",
-    tabId,
-    "reason=",
-    reason
-  );
+  console.warn("DarkEye: 爬虫标签放弃 pending", "tabId=", tabId, "reason=", reason);
   pendingCrawlers.delete(tabId);
   clearTabCrawlerReloadState(tabId);
 }
 
+/**
+ * 导航失败：按 error / URL 分类 + 次数限制自动 reload（仅 pending 爬虫标签）。
+ * @param {number} tabId
+ * @param {string} errorOrUrl
+ * @param {"navigation-error"|"error-page-url"} kind
+ */
 function tryAutoReloadPendingCrawlerTab(tabId, errorOrUrl, kind) {
   if (!pendingCrawlers.has(tabId)) return;
   if (tabCrawlerReloadInFlight.has(tabId)) return;
@@ -161,7 +162,7 @@ const MERGE_PREFIX_THREE_NO_JAVLIB = [
   "LADY",
   "SUKE",
   "AHSHIRO",
-  "POW",
+  "POW"
 ];
 
 /**
@@ -203,6 +204,7 @@ const WORK_MERGE_CLOSE_TAB_AFTER_SITE_MS = 5000;
 
 /** 桌面 navigate 写入：tabId -> { actress_id?, source? } */
 const tabNavigateContext = new Map();
+
 /** session 中持久化，避免 MV3 service worker 休眠后丢失 ID */
 const CRAWLER_WINDOW_STORAGE_KEY = "crawlerWindowId";
 let crawlerWindowId = null; // 专用爬虫窗口 ID（内存缓存，与 session 同步）
@@ -298,7 +300,7 @@ async function ensureCrawlerWindowId() {
 }
 
 /** 专用窗口内标签总数达到该值时通知桌面（去重：跌破后再回升才再报） */
-const CRAWLER_BACKLOG_THRESHOLD = 13; // 与 Firefox 扩展一致；正常情况下大于10个就通知桌面
+const CRAWLER_BACKLOG_THRESHOLD = 13;//正常情况下大于10个就通知桌面
 let backlogWarningArmed = true;
 
 /** Uint8Array -> base64（避免大文件 String.fromCharCode 爆栈） */
@@ -330,7 +332,7 @@ function postCoverFetchResult(request_id, ok, error, content_base64) {
 }
 
 function fetchCoverImageForDesktop(imageUrl, request_id) {
-  const minBytes = 5 * 1024; // 小于5kb的图片认为是下载失败
+  const minBytes = 5 * 1024;//小于5kb的图片认为是下载失败
   fetch(imageUrl, { credentials: "omit", cache: "no-store" })
     .then((r) => {
       if (!r.ok) {
@@ -470,12 +472,12 @@ function startWorkMergeFetch(requestId, serial) {
   const sites = resolveMergeSitesForSerial(serial);
   workMergeJobs.set(requestId, {
     serial: String(serial),
-    sites, // 计划参与的站点
-    perSite: {}, // 每个站点的结果
-    tabIds: [], // 参与的标签
+    sites,//计划参与的站点
+    perSite: {},//每个站点的结果
+    tabIds: [],//参与的标签
     mergeRequestId: requestId,
-    mergeTimeoutId: null, // 超时时间
-    finalized: false, // 是否完成合并
+    mergeTimeoutId: null,//超时时间
+    finalized: false,//是否完成合并
   });
   console.log("DarkEye: 爬虫任务启用站点", sites.join(","), "serial=", serial);
   const urls = {
@@ -504,8 +506,7 @@ function startWorkMergeFetch(requestId, serial) {
       },
       (tabId) => {
         const job = workMergeJobs.get(requestId);
-        // 新开的 tab 成功后把 tabId 加入到 job 中
-        if (job) job.tabIds.push(tabId);
+        if (job) job.tabIds.push(tabId);//新开的tab成功后把tabId加入到job中
       }
     );
   });
@@ -584,11 +585,7 @@ function addTabInCrawlerWindow(url, pendingPayload, onTabCreated) {
  * HTTP GET /api/v1/actress/{jp}：服务端经 SSE 下发 minnano_actress_fetch；可有 minnano_url 直达详情。
  * context 带 actress_http_request_id，回传走 /api/v1/actress-fetch-result（persist: false）。
  */
-function startMinnanoActressHttpFetch(
-  requestId,
-  actressJpName,
-  minnanoUrlFragment
-) {
+function startMinnanoActressHttpFetch(requestId, actressJpName, minnanoUrlFragment) {
   const jp = String(actressJpName || "").trim();
   if (!jp) return;
   const mid = String(minnanoUrlFragment || "").trim();
@@ -633,28 +630,27 @@ function startJavtxtTopActressesHttpFetch(requestId) {
   console.log("DarkEye: javtxt_top_actresses_fetch", rid);
 }
 
-function handleCommand(data) {
-  // 处理服务器发送来的命令
+function handleCommand(data) {//处理服务器发送来的命令
   if (data.type === "navigate") {
     const url = data.url;
     const target = data.target || "new_tab";
     const ctx = data.context || null;
 
     if (target === "new_tab") {
-      chrome.tabs.create({ url }).then((tab) => {
-        if (ctx != null && tab && tab.id !== undefined) {
-          tabNavigateContext.set(tab.id, ctx);
-        }
+      chrome.tabs.create({ url: url }).then((tab) => {
+          if (ctx != null && tab && tab.id !== undefined) {
+            tabNavigateContext.set(tab.id, ctx);
+          }
       });
     } else if (target === "current_tab") {
-      chrome.tabs.query({ active: true, currentWindow: true }).then((tabs) => {
-        if (tabs[0]) {
-          const tid = tabs[0].id;
-          chrome.tabs.update(tid, { url }).then(() => {
-            if (ctx != null) tabNavigateContext.set(tid, ctx);
-          });
-        }
-      });
+        chrome.tabs.query({active: true, currentWindow: true}).then((tabs) => {
+            if (tabs[0]) {
+                const tid = tabs[0].id;
+                chrome.tabs.update(tid, { url: url }).then(() => {
+                  if (ctx != null) tabNavigateContext.set(tid, ctx);
+                });
+            }
+        });
     }
   }
   if (data.type === "work_merge_fetch") {
@@ -673,11 +669,7 @@ function handleCommand(data) {
         ? String(data.minnano_url)
         : "";
     if (requestId && name != null && String(name).trim() !== "") {
-      startMinnanoActressHttpFetch(
-        String(requestId),
-        String(name),
-        minnanoUrl
-      );
+      startMinnanoActressHttpFetch(String(requestId), String(name), minnanoUrl);
     }
   }
   if (data.type === "javtxt_top_actresses_fetch") {
@@ -745,6 +737,67 @@ function sendMinnanoActressAutoMessage(tabId, msg, serial) {
   trySend(1);
 }
 
+function sendCrawlerMessageWithRetry(tabId, msg, label) {
+  const maxAttempts = 6;
+  pendingCrawlerMessageInFlight.add(tabId);
+
+  function finishSuccess(attemptNum) {
+    console.log(
+      "DarkEye: crawler sendMessage ok",
+      label,
+      "tabId=",
+      tabId,
+      "attempt=",
+      attemptNum
+    );
+    pendingCrawlerMessageInFlight.delete(tabId);
+    pendingCrawlers.delete(tabId);
+    clearTabCrawlerReloadState(tabId);
+  }
+
+  function finishFailure(err) {
+    pendingCrawlerMessageInFlight.delete(tabId);
+    console.error(
+      "DarkEye: crawler sendMessage FAILED after",
+      maxAttempts,
+      "attempts",
+      label,
+      "tabId=",
+      tabId,
+      err
+    );
+    abandonPendingCrawlerTab(tabId, "sendMessage-failed:" + label);
+  }
+
+  function trySend(attemptNum) {
+    chrome.tabs
+      .sendMessage(tabId, msg)
+      .then(() => finishSuccess(attemptNum))
+      .catch((err) => {
+        if (attemptNum < maxAttempts && pendingCrawlers.has(tabId)) {
+          const wait = 100 * attemptNum;
+          console.warn(
+            "DarkEye: crawler sendMessage failed; retry",
+            label,
+            "tabId=",
+            tabId,
+            "attempt=",
+            attemptNum + 1,
+            "in",
+            wait,
+            "ms",
+            err
+          );
+          setTimeout(() => trySend(attemptNum + 1), wait);
+          return;
+        }
+        finishFailure(err);
+      });
+  }
+
+  trySend(1);
+}
+
 // 主框架导航失败：仅处理专用爬虫窗口内待下发的标签（pendingCrawlers）
 chrome.webNavigation.onErrorOccurred.addListener((details) => {
   if (details.frameId !== 0) return;
@@ -766,6 +819,9 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     maybeNotifyCrawlerBacklog();
   }
   if (changeInfo.status === "complete" && pendingCrawlers.has(tabId)) {
+    if (pendingCrawlerMessageInFlight.has(tabId)) {
+      return;
+    }
     const pageUrl = (tab && tab.url) || "";
     if (isChromiumInternalErrorPageUrl(pageUrl)) {
       tryAutoReloadPendingCrawlerTab(tabId, pageUrl, "error-page-url");
@@ -775,31 +831,31 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     const task = pendingCrawlers.get(tabId);
     // 根据任务类型分发不同的指令，并透传 serial
     if (task.type === "javlib") {
-      const msg = { command: "javlibrary-dvdid", serial: task.serial };
-      if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-      chrome.tabs.sendMessage(tabId, msg);
-      console.log("javlib爬虫开始:" + tabId);
+        const msg = { command: "javlibrary-dvdid", serial: task.serial };
+        if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
+        sendCrawlerMessageWithRetry(tabId, msg, "javlib");
+        console.log("javlib爬虫开始:" + tabId);
     } else if (task.type === "javdb") {
-      const msg = { command: "javdb-dvdid", serial: task.serial };
-      if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-      chrome.tabs.sendMessage(tabId, msg);
-      console.log("javdb爬虫开始:" + tabId);
+        const msg = { command: "javdb-dvdid", serial: task.serial };
+        if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
+        sendCrawlerMessageWithRetry(tabId, msg, "javdb");
+        console.log("javdb爬虫开始:" + tabId);
     } else if (task.type === "javtxt") {
-      const msg = { command: "javtxt-dvdid", serial: task.serial };
-      if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-      chrome.tabs.sendMessage(tabId, msg);
+        const msg = { command: "javtxt-dvdid", serial: task.serial };
+        if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
+        sendCrawlerMessageWithRetry(tabId, msg, "javtxt");
       console.log("javtxt爬虫开始:" + tabId);
     } else if (task.type === "javtxt-top-actresses") {
       const msg = { command: "javtxt-parse-top-actresses" };
       if (task.apiRequestId) {
         msg.request_id = task.apiRequestId;
       }
-      chrome.tabs.sendMessage(tabId, msg);
+      sendCrawlerMessageWithRetry(tabId, msg, "javtxt-top-actresses");
       console.log("javtxt top-actresses:" + tabId);
     } else if (task.type === "avdanyuwiki") {
-      const msg = { command: "avdanyuwiki-dvdid", serial: task.serial };
-      if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
-      chrome.tabs.sendMessage(tabId, msg);
+        const msg = { command: "avdanyuwiki-dvdid", serial: task.serial };
+        if (task.mergeRequestId) msg.mergeRequestId = task.mergeRequestId;
+        sendCrawlerMessageWithRetry(tabId, msg, "avdanyuwiki");
       console.log("avdanyuwiki爬虫开始:" + tabId);
     } else if (task.type === "minnano") {
       const msg = {
@@ -813,12 +869,14 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
     // 注意：如果我们采用 Content Script 自动接力模式，这里可能不需要删除，每次刷新时判断有无任务，有就处理，直接任务全部结束
     // 为了防止多次触发，通常还是删除，依赖页面内的 sessionStorage 自动接力
-    pendingCrawlers.delete(tabId);
-    clearTabCrawlerReloadState(tabId);
+    if (task.type === "minnano") {
+      pendingCrawlers.delete(tabId);
+      clearTabCrawlerReloadState(tabId);
+    }
   }
 });
 
-// 窗口关闭时重置专用爬虫窗口 ID（与 session 一致，含 SW 重启后仅 storage 有 ID 的情况）
+// 窗口关闭时重置专用爬虫窗口 ID 与 Promise
 chrome.windows.onRemoved.addListener(async (removedId) => {
   try {
     const data = await chrome.storage.session.get(CRAWLER_WINDOW_STORAGE_KEY);
@@ -834,12 +892,15 @@ chrome.windows.onRemoved.addListener(async (removedId) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabNavigateContext.delete(tabId);
+  pendingCrawlers.delete(tabId);
+  pendingCrawlerMessageInFlight.delete(tabId);
   clearTabCrawlerReloadState(tabId);
   if (crawlerWindowId !== null) {
     maybeNotifyCrawlerBacklog();
   }
 });
 
+// 接收 content script 消息，转发到本地服务器
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message && message.type === "sse_command" && message.payload) {
     try {
@@ -850,205 +911,209 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
-  if (message.command === "check_existence") {
-    // 批量检查番号是否存在于本地数据库
-    fetch(`${SERVER_URL}/api/v1/check_existence`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: message.items }),
-    })
-      .then((res) => res.json())
-      .then((data) => sendResponse(data))
-      .catch((err) => sendResponse({ error: err.message }));
-
-    return true; // Async response
-  }
-
-  if (message.command === "capture_one") {
-    // 接受插件发来的单个id,然后发到本地，触发爬虫
-    fetch(`${SERVER_URL}/api/v1/capture/one`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(message.payload),
-    })
-      .then((res) => res.json())
-      .then((data) => sendResponse(data))
-      .catch((err) => sendResponse({ error: err.message }));
-    console.log("DarkEye: 抓取指令 to server", message);
-    return true; // Async response
-  }
-
-  if (message.command === "get_tab_context") {
-    const tabId = sender.tab && sender.tab.id;
-    const ctx = tabId !== undefined ? tabNavigateContext.get(tabId) : undefined;
-    sendResponse({ context: ctx || null });
-    return false;
-  }
-
-  if (message.command === "capture_minnano_actress") {
-    const tabId = sender.tab && sender.tab.id;
-    const tabCtx =
-      tabId !== undefined ? tabNavigateContext.get(tabId) || {} : {};
-    const msgCtx = message.context || {};
-    const context = Object.assign({}, tabCtx, msgCtx);
-    const httpRid = context.actress_http_request_id;
-    if (httpRid) {
-      const syncBody = {
-        request_id: String(httpRid),
-        ok: !message.error,
-        actress_jp_name: context.actress_jp_name || null,
-        data: message.error ? null : message.data,
-        error: message.error || null,
-      };
-      fetch(`${SERVER_URL}/api/v1/actress-fetch-result`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(syncBody),
-      })
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          return response.json();
+//这个是向服务器发送的消息
+    if (message.command === "check_existence") {
+        // 批量检查番号是否存在于本地数据库
+        fetch(`${SERVER_URL}/api/v1/check_existence`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ items: message.items })
         })
-        .then((data) => {
-          console.log("DarkEye: actress-fetch-result sent", data);
-          sendResponse({ ok: true, data });
-          // GET /api/v1/actress/... 同步查询：回传成功后关闭女优标签
-          if (sender.tab && sender.tab.id !== undefined) {
-            const tid = sender.tab.id;
-            setTimeout(() => {
-              chrome.tabs.remove(tid).catch(() => {});
-            }, 3000);
-          }
+        .then(res => res.json())
+        .then(data => sendResponse(data))
+        .catch(err => sendResponse({ error: err.message }));
+
+        return true; // Async response
+    }
+    if (message.command === "capture_one") {
+        // 接受插件发来的单个id,然后发到本地，触发爬虫
+        fetch(`${SERVER_URL}/api/v1/capture/one`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(message.payload)
         })
-        .catch((error) => {
-          console.error("DarkEye: Failed to send actress-fetch-result", error);
-          sendResponse({ ok: false, error: String(error) });
-        });
-      return true;
+        .then(res => res.json())
+        .then(data => sendResponse(data))
+        .catch(err => sendResponse({ error: err.message }));
+        console.log("DarkEye: 抓取指令 to server", message);
+        return true; // Async response
     }
-    const payload = {
-      context,
-      url: sender.tab && sender.tab.url ? sender.tab.url : "",
-    };
-    if (message.error) {
-      payload.error = message.error;
-    } else {
-      payload.data = message.data;
-    }
-    fetch(`${SERVER_URL}/api/v1/minnano-actress-capture`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    })
-      .then((response) => response.json())
-      .then((data) => {
-        console.log("DarkEye: minnano actress capture sent", data);
-        sendResponse({ ok: true, data });
-        // 桌面「单个女优」自动爬取（persist）：回传成功后与 send_crawler_result 一致，延迟关标签
-        const mergedCtx = Object.assign({}, tabCtx, msgCtx);
-        if (
-          mergedCtx.persist &&
-          !message.error &&
-          sender.tab &&
-          sender.tab.id !== undefined
-        ) {
-          const tid = sender.tab.id;
-          setTimeout(() => {
-            chrome.tabs.remove(tid);
-          }, 10000);
-        }
-      })
-      .catch((error) => {
-        console.error("DarkEye: Failed to send minnano capture", error);
-        sendResponse({ ok: false, error: String(error) });
-      });
-    return true;
-  }
-
-  if (message.command === "notify-cloudflare-challenge") {
-    const tabUrl =
-      sender.tab && sender.tab.url ? String(sender.tab.url) : "";
-    const body = {
-      url: tabUrl,
-      site: message.site != null ? String(message.site) : "",
-      phase: message.phase != null ? String(message.phase) : "",
-      serial: message.serial != null ? String(message.serial) : "",
-      merge_request_id:
-        message.merge_request_id != null
-          ? String(message.merge_request_id)
-          : "",
-    };
-    fetch(`${SERVER_URL}/api/v1/cloudflare-challenge-notify`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }).catch((err) => {
-      console.error("DarkEye: cloudflare-challenge-notify failed", err);
-    });
-    return false;
-  }
-
-  // send_crawler_result：① merge_request_id + 四站 → work_merge；② 热门女优带 request_id → top-actresses-result；③ 其余不再 POST（已无对应接口）。
-  if (message.command === "send_crawler_result") {
-    if (message.merge_request_id && message.web) {
-      const rid = message.merge_request_id;
-      const web = message.web;
-      if (WORK_MERGE_SITES_ALL.indexOf(web) >= 0) {
-        const job = workMergeJobs.get(rid);
-        if (job && job.sites && job.sites.indexOf(web) >= 0) {
-          const srcTid =
-            sender.tab && sender.tab.id !== undefined
-              ? sender.tab.id
-              : undefined;
-          onWorkMergeSiteResult(rid, web, message.data || {}, srcTid);
-        }
+    if (message.command === "get_tab_context") {
+        const tabId = sender.tab && sender.tab.id;
+        const ctx = tabId !== undefined ? tabNavigateContext.get(tabId) : undefined;
+        sendResponse({ context: ctx || null });
         return false;
-      }
     }
-    const topApiRid =
-      message.web === "javtxt-top-actresses" && message.request_id
-        ? String(message.request_id).trim()
-        : "";
-    console.log("DarkEye: send_crawler_result", message);
-    if (topApiRid === "") {
-      console.warn(
-        "DarkEye: 跳过上传（非 work 合并路径且无 top-actresses request_id） web=",
-        message.web
-      );
-      return false;
-    }
-    const inner = message.data || {};
-    const names = Array.isArray(inner.names) ? inner.names : [];
-    const topPayload = {
-      request_id: topApiRid,
-      ok: !!message.result,
-      names: names,
-    };
-    if (inner.error) {
-      topPayload.error = String(inner.error);
-    }
-    fetch(`${SERVER_URL}/api/v1/top-actresses-result`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(topPayload),
-    })
-      .then((response) => response.json())
-      .then((data) => {
-        console.log("DarkEye: top-actresses-result ok", data);
-        if (sender.tab && sender.tab.id) {
-          setTimeout(() => {
-            chrome.tabs.remove(sender.tab.id);
-          }, 10000);
+    if (message.command === "capture_minnano_actress") {
+        const tabId = sender.tab && sender.tab.id;
+        const tabCtx = tabId !== undefined ? (tabNavigateContext.get(tabId) || {}) : {};
+        const msgCtx = message.context || {};
+        const context = Object.assign({}, tabCtx, msgCtx);
+        const httpRid = context.actress_http_request_id;
+        if (httpRid) {
+            const syncBody = {
+                request_id: String(httpRid),
+                ok: !message.error,
+                actress_jp_name: context.actress_jp_name || null,
+                data: message.error ? null : message.data,
+                error: message.error || null,
+            };
+            fetch(`${SERVER_URL}/api/v1/actress-fetch-result`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(syncBody),
+            })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}`);
+                    }
+                    return response.json();
+                })
+                .then((data) => {
+                    console.log("DarkEye: actress-fetch-result sent", data);
+                    sendResponse({ ok: true, data });
+                    // GET /api/v1/actress/... 同步查询：回传成功后关闭女优标签
+                    if (sender.tab && sender.tab.id !== undefined) {
+                        const tid = sender.tab.id;
+                        setTimeout(() => {
+                            chrome.tabs.remove(tid).catch(() => {});
+                        }, 3000);
+                    }
+                })
+                .catch((error) => {
+                    console.error("DarkEye: Failed to send actress-fetch-result", error);
+                    sendResponse({ ok: false, error: String(error) });
+                });
+            return true;
         }
-      })
-      .catch((error) => {
-        console.error("DarkEye: top-actresses-result failed", error);
-      });
-  }
+        const payload = {
+            context,
+            url: sender.tab && sender.tab.url ? sender.tab.url : "",
+        };
+        if (message.error) {
+            payload.error = message.error;
+        } else {
+            payload.data = message.data;
+        }
+        fetch(`${SERVER_URL}/api/v1/minnano-actress-capture`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        })
+            .then((response) => response.json())
+            .then((data) => {
+                console.log("DarkEye: minnano actress capture sent", data);
+                sendResponse({ ok: true, data });
+                // 桌面「单个女优」自动爬取（persist）：回传成功后与 send_crawler_result 一致，延迟关标签
+                const mergedCtx = Object.assign({}, tabCtx, msgCtx);
+                if (
+                    mergedCtx.persist &&
+                    !message.error &&
+                    sender.tab &&
+                    sender.tab.id !== undefined
+                ) {
+                    const tid = sender.tab.id;
+                    setTimeout(() => {
+                        chrome.tabs.remove(tid);
+                    }, 10000);
+                }
+            })
+            .catch((error) => {
+                console.error("DarkEye: Failed to send minnano capture", error);
+                sendResponse({ ok: false, error: String(error) });
+            });
+        return true;
+    }
+    if (message.command === "notify-cloudflare-challenge") {
+        const tabUrl =
+            sender.tab && sender.tab.url ? String(sender.tab.url) : "";
+        const body = {
+            url: tabUrl,
+            site: message.site != null ? String(message.site) : "",
+            phase: message.phase != null ? String(message.phase) : "",
+            serial: message.serial != null ? String(message.serial) : "",
+            merge_request_id:
+                message.merge_request_id != null
+                    ? String(message.merge_request_id)
+                    : "",
+        };
+        fetch(`${SERVER_URL}/api/v1/cloudflare-challenge-notify`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        }).catch((err) => {
+            console.error("DarkEye: cloudflare-challenge-notify failed", err);
+        });
+        return false;
+    }
+    // send_crawler_result：① merge_request_id + 四站 → work_merge；② 热门女优带 request_id → top-actresses-result；③ 其余不再 POST（已无对应接口）。
+    if (message.command === "send_crawler_result") {
+        if (message.merge_request_id && message.web) {
+            const rid = message.merge_request_id;
+            const web = message.web;
+            if (WORK_MERGE_SITES_ALL.indexOf(web) >= 0) {
+                const job = workMergeJobs.get(rid);
+                if (
+                    job &&
+                    job.sites &&
+                    job.sites.indexOf(web) >= 0
+                ) {
+                    const srcTid =
+                        sender.tab && sender.tab.id !== undefined
+                            ? sender.tab.id
+                            : undefined;
+                    onWorkMergeSiteResult(
+                        rid,
+                        web,
+                        message.data || {},
+                        srcTid
+                    );
+                }
+                return false;
+            }
+        }
+        const topApiRid =
+            message.web === "javtxt-top-actresses" && message.request_id
+                ? String(message.request_id).trim()
+                : "";
+        console.log("DarkEye: send_crawler_result", message);
+        if (topApiRid === "") {
+            console.warn(
+                "DarkEye: 跳过上传（非 work 合并路径且无 top-actresses request_id） web=",
+                message.web
+            );
+            return false;
+        }
+        const inner = message.data || {};
+        const names = Array.isArray(inner.names) ? inner.names : [];
+        const topPayload = {
+            request_id: topApiRid,
+            ok: !!message.result,
+            names: names,
+        };
+        if (inner.error) {
+            topPayload.error = String(inner.error);
+        }
+        fetch(`${SERVER_URL}/api/v1/top-actresses-result`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(topPayload),
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log("DarkEye: top-actresses-result ok", data);
+            if (sender.tab && sender.tab.id) {
+                setTimeout(() => {
+                    chrome.tabs.remove(sender.tab.id);
+                }, 10000);
+            }
+        })
+        .catch(error => {
+            console.error("DarkEye: top-actresses-result failed", error);
+        });
+    }
 });
 
 async function ensureOffscreen() {
