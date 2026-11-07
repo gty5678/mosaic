@@ -6,6 +6,10 @@
       "type": "process",
       "command": "uv",
       "args": ["sync"],
+      "osx": {
+        "command": "/bin/zsh",
+        "args": ["-l", "-c", "uv sync"]
+      },
       "options": {
         "cwd": "${workspaceFolder}"
       },
