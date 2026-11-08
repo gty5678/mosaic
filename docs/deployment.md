@@ -40,14 +40,14 @@ uv run mosaic-bridge
 
 ## Windows 构建
 
-构建脚本使用 PyInstaller，生成一个 Worker 可执行文件和扩展目录：
+构建脚本使用 PyInstaller，生成一个 Worker 可执行文件和两个扩展 ZIP：
 
 ```powershell
 uv sync --group dev
 .\build-installer.ps1
 ```
 
-产物位于 `output/`，仅包含 `mosaic-bridge.exe` 和 `extensions/` 目录，其中收集 `chrome_capture/` 与 `firefox_capture/` 两种扩展。脚本会删除并重建 `build/`、`dist/` 与 `output/`；不要把未备份的手工文件放在这些目录中。
+产物位于 `output/`，包含 `mosic-win-x64.exe`、`chrome.zip` 和 `firefox.zip`。脚本会删除并重建 `build/`、`dist/` 与 `output/`；不要把未备份的手工文件放在这些目录中。
 
 发布前至少验证：可执行文件能启动、健康检查可用、一个 Chrome/Firefox 扩展能连接 SSE，以及桌面主程序代理能返回预期结果。
 
@@ -59,12 +59,12 @@ uv sync --group dev
 ./build-macos.sh
 ```
 
-脚本使用锁定依赖，生成包含 Python 运行时的单文件程序 `mosaic-bridge`，并将 Chrome 和 Firefox 扩展收集到同级 `extensions/chrome_capture/` 与 `extensions/firefox_capture/` 目录。缺少任一种扩展的 `manifest.json` 时会报错终止。不生成启动脚本或 ZIP，产物目录为：
+脚本使用锁定依赖，生成包含 Python 运行时的单文件程序 `mosic-macos-<架构>`，以及同级 `chrome.zip` 和 `firefox.zip`。两个扩展 ZIP 的根目录均包含 `manifest.json`。缺少任一种扩展的清单时会报错终止。产物目录为：
 
-- Apple Silicon：`output/macos/arm64/mosaic-bridge-macos-arm64/`
-- Intel：`output/macos/x86_64/mosaic-bridge-macos-x86_64/`
+- Apple Silicon：`output/macos/arm64/mosic-macos-arm64/`
+- Intel：`output/macos/x86_64/mosic-macos-x86_64/`
 
-在产物目录的终端执行 `./mosaic-bridge` 启动。接收者无需安装 Python、uv 或将程序放入 Applications。终端按 Ctrl+C 停止服务。端口固定为 `56790`，请勿同时运行多个实例。Chrome 可通过开发者模式加载 `extensions/chrome_capture/`，Firefox 可临时加载 `extensions/firefox_capture/manifest.json`。
+Apple Silicon 在产物目录的终端执行 `./mosic-macos-arm64` 启动，Intel 执行 `./mosic-macos-x86_64`。接收者无需安装 Python 或 uv。终端按 Ctrl+C 停止服务。端口固定为 `56790`，请勿同时运行多个实例。解压 `chrome.zip` 后在 Chrome 开发者模式加载解压目录；解压 `firefox.zip` 后在 Firefox 临时加载其中的 `manifest.json`。
 
 构建使用独立的 `main-macos.spec`，中间文件位于 `build/macos/<架构>/`，不会清理 Windows 构建文件。按构建 Mac 的原生架构输出，需分别在 Apple Silicon 与 Intel Mac 上构建对应版本。Windows 脚本仍会清理整个 `output/`，需要同时保留两端产物时请先另行保存。
 

@@ -153,7 +153,7 @@ uv sync --group dev
 .\build-installer.ps1
 ```
 
-构建产物会输出到 `output/`，包含单文件程序 `mosaic-bridge.exe` 和 `extensions/` 目录（Chrome 与 Firefox 扩展）。
+构建产物会输出到 `output/`，包含单文件程序 `mosic-win-x64.exe`、`chrome.zip` 和 `firefox.zip`。
 
 ### 构建 macOS 免安装包
 
@@ -163,7 +163,7 @@ uv sync --group dev
 ./build-macos.sh
 ```
 
-产物位于 `output/macos/<架构>/mosaic-bridge-macos-<架构>/`，仅包含单文件程序 `mosaic-bridge` 和 `extensions/` 目录。在产物目录的终端执行 `./mosaic-bridge` 启动，无需安装 Python 或 uv。Apple Silicon 与 Intel 需分别在对应架构的 Mac 上构建。macOS 脚本和 spec 独立于 Windows 构建，详见[部署与排障](docs/deployment.md#macos-免安装构建)。
+产物位于 `output/macos/<架构>/mosic-macos-<架构>/`，包含单文件程序 `mosic-macos-<架构>`、`chrome.zip` 和 `firefox.zip`。Apple Silicon 在产物目录的终端执行 `./mosic-macos-arm64` 启动，无需安装 Python 或 uv。Apple Silicon 与 Intel 需分别在对应架构的 Mac 上构建。macOS 脚本和 spec 独立于 Windows 构建，详见[部署与排障](docs/deployment.md#macos-免安装构建)。
 
 ## 项目结构
 

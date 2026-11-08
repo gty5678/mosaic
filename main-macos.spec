@@ -1,5 +1,6 @@
 # macOS-only portable executable; keep the Windows main.spec independent.
 import os
+import platform
 import sys
 
 from PyInstaller.utils.hooks import collect_data_files
@@ -19,7 +20,7 @@ a = Analysis(
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [],
-    name="mosaic-bridge",
+    name=f"mosic-macos-{platform.machine()}",
     console=True,
     strip=False,
     upx=False,

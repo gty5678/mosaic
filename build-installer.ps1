@@ -1,5 +1,5 @@
 
-# Produce one executable and unpacked browser extensions.
+# Produce one executable and two browser extension archives.
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -32,11 +32,10 @@ Write-Host "Building with PyInstaller..."
 uv run --group dev pyinstaller --clean --noconfirm --distpath $distDir .\main.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
-Write-Host "Collecting browser extensions to $distDir..."
-$extensionsDir = Join-Path $distDir "extensions"
-New-Item -ItemType Directory -Path $extensionsDir -Force | Out-Null
-foreach ($extension in @("chrome_capture", "firefox_capture")) {
-    Copy-Item -LiteralPath (Join-Path $PSScriptRoot "extensions\$extension") -Destination $extensionsDir -Recurse -Force
+Write-Host "Zipping browser extensions to $distDir..."
+foreach ($browser in @("chrome", "firefox")) {
+    $source = Join-Path $PSScriptRoot "extensions\${browser}_capture\*"
+    Compress-Archive -Path $source -DestinationPath (Join-Path $distDir "$browser.zip") -Force
 }
 
 Write-Host "Build complete."

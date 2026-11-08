@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller 6.x + FastAPI / Uvicorn / httpx
-# 单文件: dist\darkeye-extension-worker.exe
-# 使用：在仓库根目录  pyinstaller darkeye-extension-worker.spec  或  .\build-installer.ps1
+# 单文件: output\mosic-win-x64.exe
+# 使用：在仓库根目录  pyinstaller main.spec  或  .\build-installer.ps1
 
 import os
 
@@ -170,7 +170,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name="mosaic-bridge",
+    name="mosic-win-x64",
     icon=os.path.join(SPEC_DIR, "docs", "assets", "mosaic-bridge.ico"),
     debug=False,
     bootloader_ignore_signals=False,
